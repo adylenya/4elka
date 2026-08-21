@@ -3,6 +3,16 @@ import AppKit
 /// Начинает сессию перетаскивания сразу на несколько файлов.
 public final class DragSourceView: NSView, NSDraggingSource {
     public var urlsForDrag: () -> [URL] = { [] }
+
+    /// Клик, который эта вью иначе съела бы молча.
+    ///
+    /// Вью перекрывает содержимое под собой и не передаёт `mouseDown` дальше,
+    /// поэтому SwiftUI-жест под ней не срабатывает вовсе — без этого обратного
+    /// вызова плитка истории перестала бы отзываться на клик. Отличить клик от
+    /// жеста просто: начавшееся перетаскивание уводит события в свой вложенный
+    /// цикл, и `mouseUp` сюда уже не приходит.
+    public var onClick: (NSEvent) -> Void = { _ in }
+
     private var mouseDownPoint: NSPoint?
 
     public func draggingSession(_ session: NSDraggingSession,
@@ -38,5 +48,11 @@ public final class DragSourceView: NSView, NSDraggingSource {
         beginDraggingSession(with: items, event: event, source: self)
     }
 
-    public override func mouseUp(with event: NSEvent) { mouseDownPoint = nil }
+    /// Отпускание без начатого жеста — это клик. Признак «жест начался» —
+    /// обнулённая точка нажатия: её сбрасывает `mouseDragged`, перешагнув порог.
+    public override func mouseUp(with event: NSEvent) {
+        let wasPressed = mouseDownPoint != nil
+        mouseDownPoint = nil
+        if wasPressed { onClick(event) }
+    }
 }

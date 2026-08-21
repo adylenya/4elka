@@ -18,6 +18,37 @@ public enum Config {
         public static let indexWriteDebounce: TimeInterval = 1.0
     }
 
+    /// Перетаскивание наружу: имена подготовленных файлов и уборка за собой.
+    public enum Drag {
+        /// Сколько живёт подготовленный под жест файл, прежде чем его уберут.
+        /// Час — с большим запасом на то, что получатель жеста читает файл
+        /// уже после отпускания кнопки, и при этом каталог не растёт вечно.
+        public static let tempLifetime: TimeInterval = 60 * 60
+        /// Длина имени файла, вырезанного из текста. Сорок символов — строка,
+        /// которая ещё читается в Finder целиком.
+        public static let nameMaxLength = 40
+        /// Штамп времени в имени снимка. Двоеточий в имени файла быть не может,
+        /// поэтому часы-минуты-секунды разделены дефисом.
+        public static let nameDateFormat = "yyyy-MM-dd HH-mm-ss"
+    }
+
+    /// Сетка истории в раскрытой панели.
+    public enum HistoryGrid {
+        public static let tileSide: CGFloat = 92
+        public static let tileSpacing: CGFloat = 8
+        public static let padding: CGFloat = 10
+        public static let rowSpacing: CGFloat = 8
+        /// Зазор внутри плитки: между иконкой и подписью, вокруг метки закрепления.
+        public static let innerSpacing: CGFloat = 4
+        /// Толщина рамки вокруг выделенной плитки.
+        public static let selectionLineWidth: CGFloat = 2
+        public static let tileCornerRadius: CGFloat = 8
+        /// Сколько строк текста видно на плитке.
+        public static let textLineLimit = 2
+        /// Сторона иконки файла на плитке.
+        public static let fileIconSide: CGFloat = 40
+    }
+
     public enum Battery {
         public static let lowThreshold = 20
         public static let highThreshold = 80

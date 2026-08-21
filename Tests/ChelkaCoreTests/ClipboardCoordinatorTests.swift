@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 import Foundation
 @testable import ChelkaCore
@@ -14,9 +15,31 @@ private func makeCoordinator(panel: @escaping () -> PanelState = { .hidden })
     return (ClipboardCoordinator(capture: capture, index: index, blobs: blobs, activity: center), center)
 }
 
+/// Координатор со своим каталогом перетаскивания: файлы жеста не должны
+/// сыпаться в общий `AppPaths.dragTemp`, где их увидят другие тесты.
+@MainActor
+private func makeDragCoordinator() -> (ClipboardCoordinator, BlobStore, URL) {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("chelka-drag-\(UUID().uuidString)")
+    let blobs = BlobStore(root: dir.appendingPathComponent("blobs"))
+    let index = HistoryIndex(fileURL: dir.appendingPathComponent("index.json"), blobs: blobs)
+    let capture = ClipboardCapture(rules: IgnoreRules(ownBundleID: "own"), blobs: blobs)
+    let dragRoot = dir.appendingPathComponent("drag")
+    let coordinator = ClipboardCoordinator(capture: capture, index: index, blobs: blobs,
+                                           activity: ActivityCenter(panelState: { .hidden }),
+                                           dragRoot: dragRoot)
+    return (coordinator, blobs, dragRoot)
+}
+
 private func snap(_ text: String, app: String? = "com.apple.Safari") -> PasteboardSnapshot {
     PasteboardSnapshot(changeCount: 1, types: ["public.utf8-plain-text"], text: text,
                        imageData: nil, imageExtension: nil, fileURLs: [], sourceBundleID: app)
+}
+
+private func imageSnap(_ byte: UInt8) -> PasteboardSnapshot {
+    PasteboardSnapshot(changeCount: 1, types: ["public.png"], text: nil,
+                       imageData: Data([0x89, 0x50, 0x4E, 0x47, byte]), imageExtension: "png",
+                       fileURLs: [], sourceBundleID: "com.apple.Safari")
 }
 
 @Test @MainActor func storesItemAndRaisesCard() {
@@ -96,4 +119,148 @@ private func snap(_ text: String, app: String? = "com.apple.Safari") -> Pasteboa
     let item = ClipItem(id: UUID(), kind: .text("первая\nвторая"), sourceAppBundleID: nil,
                         createdAt: Date(), contentHash: "h", isPinned: false)
     #expect(ClipboardCoordinator.activityEvent(for: item).title == "первая")
+}
+
+// MARK: - Имена и подготовка файлов для перетаскивания
+
+@Test func dragNameForImageUsesTimestamp() {
+    let item = ClipItem(id: UUID(), kind: .image(.init(blobName: "a.png", byteCount: 1, pixelSize: .zero)),
+                        sourceAppBundleID: nil,
+                        createdAt: Date(timeIntervalSince1970: 0), contentHash: "h", isPinned: false)
+    #expect(ClipboardCoordinator.dragName(for: item).hasPrefix("Снимок 1970-01-01"))
+}
+
+@Test func dragNameForLongTextIsTrimmed() {
+    let item = ClipItem(id: UUID(), kind: .text(String(repeating: "я", count: 100)),
+                        sourceAppBundleID: nil, createdAt: Date(), contentHash: "h", isPinned: false)
+    #expect(ClipboardCoordinator.dragName(for: item).count == 40)
+}
+
+@Test @MainActor func materializeForDragWritesTextAsFileUnderItsName() throws {
+    let (c, _, _) = makeDragCoordinator()
+    c.handle(snap("первая строка\nвторая"), now: Date())
+    let ids = c.history.items.map(\.id)
+
+    let urls = c.materializeForDrag(ids)
+
+    #expect(urls.count == 1)
+    #expect(urls.first?.lastPathComponent == "первая строка.txt")
+    #expect(try String(contentsOf: urls[0], encoding: .utf8) == "первая строка\nвторая")
+}
+
+/// Контракт задачи 4: пропавший с диска блоб выбрасывает из жеста один элемент,
+/// а не ломает перетаскивание целиком.
+@Test @MainActor func materializeForDragDropsItemWhoseBlobVanished() {
+    let (c, blobs, _) = makeDragCoordinator()
+    c.handle(imageSnap(1), now: Date())
+    c.handle(imageSnap(2), now: Date())
+    let items = c.history.items
+    #expect(items.count == 2)
+    blobs.delete([items[0].blobName ?? ""])
+
+    let urls = c.materializeForDrag(items.map(\.id))
+
+    #expect(urls.count == 1)
+    #expect(FileManager.default.fileExists(atPath: urls[0].path))
+}
+
+@Test @MainActor func materializeForDragSweepsStaleFilesOfPreviousGestures() throws {
+    let (c, _, dragRoot) = makeDragCoordinator()
+    try FileManager.default.createDirectory(at: dragRoot, withIntermediateDirectories: true)
+    let stale = dragRoot.appendingPathComponent("прошлый жест.txt")
+    try Data("x".utf8).write(to: stale)
+    try FileManager.default.setAttributes(
+        [.modificationDate: Date(timeIntervalSinceNow: -Config.Drag.tempLifetime - 60)],
+        ofItemAtPath: stale.path)
+
+    c.handle(snap("свежий"), now: Date())
+    _ = c.materializeForDrag(c.history.items.map(\.id))
+
+    #expect(FileManager.default.fileExists(atPath: stale.path) == false)
+}
+
+// MARK: - Групповые операции над выделенным
+
+@Test @MainActor func removingSeveralAtOnceDropsThemAllAndTheirBlobs() {
+    let (c, blobs, _) = makeDragCoordinator()
+    c.handle(imageSnap(1), now: Date())
+    c.handle(imageSnap(2), now: Date())
+    let items = c.history.items
+    let names = items.compactMap(\.blobName)
+
+    c.remove(items.map(\.id))
+
+    #expect(c.history.items.isEmpty)
+    #expect(names.count == 2)
+    #expect(names.allSatisfy { blobs.exists($0) == false })
+}
+
+@Test @MainActor func togglePinPinsWholeSelectionAndThenReleasesIt() {
+    let (c, _, _) = makeDragCoordinator()
+    c.handle(snap("один"), now: Date())
+    c.handle(snap("два"), now: Date())
+    let ids = c.history.items.map(\.id)
+
+    c.togglePin(ids)
+    #expect(c.history.items.allSatisfy { $0.isPinned })
+
+    c.togglePin(ids)
+    #expect(c.history.items.allSatisfy { !$0.isPinned })
+}
+
+/// Один незакреплённый в выделении означает «закрепить всё», а не «переключить
+/// каждый по-своему»: иначе одна клавиша давала бы разнобой внутри выделения.
+@Test @MainActor func togglePinOnMixedSelectionPinsEverything() {
+    let (c, _, _) = makeDragCoordinator()
+    c.handle(snap("один"), now: Date())
+    c.handle(snap("два"), now: Date())
+    let ids = c.history.items.map(\.id)
+    c.pin(ids[0])
+
+    c.togglePin(ids)
+
+    #expect(c.history.items.allSatisfy { $0.isPinned })
+}
+
+/// Системный буфер в тестах не трогаем — пишем в свой именованный.
+/// Возвращённый номер записи обязан совпадать с номером буфера: по нему
+/// наблюдатель отличает нашу запись от чужого копирования.
+@Test func copyWritesTextToGivenPasteboardAndReportsItsChangeCount() {
+    let pb = NSPasteboard(name: NSPasteboard.Name("com.adylenya.4elka.tests"))
+    let item = ClipItem(id: UUID(), kind: .text("отдай меня"), sourceAppBundleID: nil,
+                        createdAt: Date(), contentHash: "h", isPinned: false)
+
+    let reported = ClipboardCoordinator.write(
+        item, to: pb, blobs: BlobStore(root: FileManager.default.temporaryDirectory))
+
+    #expect(pb.string(forType: .string) == "отдай меня")
+    #expect(reported == pb.changeCount)
+}
+
+/// Пропавший блоб оставляет буфер пустым, а не с прошлым содержимым: вставить
+/// вместо картинки чужой старый текст было бы хуже, чем не вставить ничего.
+@Test func copyOfVanishedImageLeavesPasteboardEmpty() {
+    let pb = NSPasteboard(name: NSPasteboard.Name("com.adylenya.4elka.tests.gone"))
+    pb.clearContents()
+    pb.setString("прошлое", forType: .string)
+    let item = ClipItem(id: UUID(),
+                        kind: .image(.init(blobName: "нет-такого.png", byteCount: 1, pixelSize: .zero)),
+                        sourceAppBundleID: nil, createdAt: Date(), contentHash: "h", isPinned: false)
+
+    ClipboardCoordinator.write(item, to: pb,
+                               blobs: BlobStore(root: FileManager.default.temporaryDirectory))
+
+    #expect(pb.string(forType: .string) == nil)
+}
+
+@Test func copyWritesFileURLsToGivenPasteboard() {
+    let pb = NSPasteboard(name: NSPasteboard.Name("com.adylenya.4elka.tests.files"))
+    let url = URL(fileURLWithPath: "/tmp/чек.pdf")
+    let item = ClipItem(id: UUID(), kind: .files([url]), sourceAppBundleID: nil,
+                        createdAt: Date(), contentHash: "h", isPinned: false)
+
+    ClipboardCoordinator.write(item, to: pb, blobs: BlobStore(root: FileManager.default.temporaryDirectory))
+
+    let read = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
+    #expect(read == [url])
 }
