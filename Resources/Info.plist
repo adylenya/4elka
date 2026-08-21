@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>4elka</string>
+    <key>CFBundleDisplayName</key><string>4elka</string>
+    <!-- Идентификатор сверяется тестом с Config.ownBundleID: по нему приложение
+         узнаёт свою собственную запись в буфер обмена. -->
+    <key>CFBundleIdentifier</key><string>com.adylenya.4elka</string>
+    <!-- Имя модуля Swift не может начинаться с цифры: продукт 4elka.app,
+         исполняемый файл внутри — Chelka. -->
+    <key>CFBundleExecutable</key><string>Chelka</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <!-- 26, а не 14: интерфейс построен на системном «жидком стекле», которого
+         в более старых системах нет. Занизить — значит разрешить установку
+         туда, где приложение просто упадёт. -->
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
+    <!-- Убирает иконку из дока. Окон у приложения нет, живёт он в челке и в
+         строке меню. -->
+    <key>LSUIElement</key><true/>
+    <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
