@@ -10,13 +10,26 @@ private var measured: NotchGeometry {
     NotchGeometry(rect: CGRect(x: 918, y: 1291, width: 220, height: 38), hasPhysicalNotch: true)
 }
 
-@Test func cardStartsBelowTheNotchNotBehindIt() {
-    // Раньше верх карточки совпадал с верхом экрана, и первая строка уезжала
-    // за челку. Теперь верх карточки — это низ челки.
+@Test func cardContinuesTheNotchInsteadOfHangingBelowIt() {
+    // Фигура закреплена у верха экрана и продолжает челку, а не висит под ней.
     let frame = NotchLayout.cardFrame(size: CGSize(width: 320, height: 54), geometry: measured)
-    #expect(frame.maxY == measured.rect.minY)
+    #expect(frame.maxY == measured.rect.maxY)
     #expect(frame.midX == measured.rect.midX)
-    #expect(frame.height == 54)
+}
+
+@Test func cardAlwaysHasWingsBesideTheNotch() {
+    // Крылья должны быть даже если запрошенная ширина меньше челки: иначе
+    // фигура её не расширяет и челка остаётся заметной.
+    let narrow = NotchLayout.cardFrame(size: CGSize(width: 100, height: 54), geometry: measured)
+    #expect(narrow.width >= measured.rect.width + Config.Notch.wingWidth * 2)
+    let wing = (narrow.width - measured.rect.width) / 2
+    #expect(wing >= Config.Notch.wingWidth)
+}
+
+@Test func cardIsAtLeastAsTallAsTheNotch() {
+    // Фигура ниже челки бессмысленна: ей нечего продолжать.
+    let squat = NotchLayout.cardFrame(size: CGSize(width: 320, height: 5), geometry: measured)
+    #expect(squat.height > measured.rect.height)
 }
 
 @Test func panelBodyStartsBelowTheNotch() {
