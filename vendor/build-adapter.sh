@@ -6,8 +6,14 @@ SRC="$ROOT/mediaremote-adapter"
 OUT="$ROOT/build"
 FW="$OUT/MediaRemoteAdapter.framework"
 
-if [ ! -d "$SRC" ]; then
-  git clone --depth 1 https://github.com/ungive/mediaremote-adapter.git "$SRC"
+# Проверяем наличие .git и клонируем через временный каталог с атомарным
+# переносом: иначе прерванное на середине клонирование оставит существующий,
+# но неполный каталог, следующий запуск его молча пропустит и упадёт уже
+# на clang, требуя ручной чистки.
+if [ ! -d "$SRC/.git" ]; then
+  rm -rf "$SRC" "$SRC.partial"
+  git clone --depth 1 https://github.com/ungive/mediaremote-adapter.git "$SRC.partial"
+  mv "$SRC.partial" "$SRC"
 fi
 
 rm -rf "$FW"

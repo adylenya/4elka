@@ -1,4 +1,4 @@
-.PHONY: adapter test build run app clean
+.PHONY: adapter test build run clean
 
 adapter:
 	bash vendor/build-adapter.sh
