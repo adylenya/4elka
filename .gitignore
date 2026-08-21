@@ -6,3 +6,6 @@ vendor/mediaremote-adapter/
 *.app
 .DS_Store
 .claude/worktrees/
+
+# Рабочие записи процесса разработки: журнал решений и задания агентам.
+.superpowers/

@@ -1,0 +1,16 @@
+# Переводы строк приводим к одному виду, чтобы история не шумела на разных машинах.
+* text=auto eol=lf
+
+# Явно текстовые — чтобы git не решал сам.
+*.swift  text
+*.md     text
+*.json   text
+*.sh     text
+*.yml    text
+Makefile text
+
+# Бинарное — не трогать и не пытаться сливать.
+*.png    binary
+*.jpg    binary
+*.pdf    binary
+*.icns   binary
