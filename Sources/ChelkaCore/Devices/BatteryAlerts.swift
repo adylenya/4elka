@@ -1,7 +1,7 @@
 import Foundation
 
-public struct BatteryAlert: Equatable {
-    public enum Level: Equatable { case low, high, full }
+public struct BatteryAlert: Equatable, Sendable {
+    public enum Level: Equatable, Sendable { case low, high, full }
 
     public let deviceName: String
     public let percent: Int
@@ -30,8 +30,8 @@ public struct BatteryAlert: Equatable {
 
 /// Срабатывание на пересечении порога, а не по условию «ниже порога»:
 /// иначе на 19% карточка выезжала бы при каждом опросе, то есть раз в минуту.
-public struct BatteryAlerts: Equatable {
-    private struct Armed: Equatable {
+public struct BatteryAlerts: Equatable, Sendable {
+    private struct Armed: Equatable, Sendable {
         var lowArmed: Bool
         var highArmed: Bool
         var fullArmed: Bool
@@ -69,10 +69,15 @@ public struct BatteryAlerts: Equatable {
                 state.highArmed = true
             }
 
-            if device.percent >= 100, state.fullArmed {
-                fired.append(BatteryAlert(deviceName: device.name, percent: 100, level: .full))
+            let full = Config.Battery.fullThreshold
+            if device.percent >= full, state.fullArmed {
+                fired.append(BatteryAlert(deviceName: device.name, percent: full, level: .full))
                 state.fullArmed = false
-            } else if device.percent < 100 - gap {
+                // «Заряжен» и «уже много» — про одно и то же событие. Устройство,
+                // впервые увиденное сразу на сотне при зарядке, иначе выдало бы две
+                // карточки подряд об одном и том же.
+                fired.removeAll { $0.deviceName == device.name && $0.level == .high }
+            } else if device.percent < full - gap {
                 state.fullArmed = true
             }
 

@@ -17,6 +17,7 @@ public enum Config {
     public enum Battery {
         public static let lowThreshold = 20
         public static let highThreshold = 80
+        public static let fullThreshold = 100
         public static let hysteresis = 5
         public static let pollInterval: TimeInterval = 60
     }
