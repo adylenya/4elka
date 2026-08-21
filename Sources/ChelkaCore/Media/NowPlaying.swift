@@ -53,18 +53,40 @@ public struct NowPlaying: Equatable, Sendable {
         let base = line.isDiff ? self : NowPlaying.empty
         let p = line.payload
 
+        // Ключ есть, но тип не тот — это сломанный формат на той стороне, а не
+        // отсутствие значения. Молчать нельзя: без сигнала будущая смена формата
+        // в macOS проявится как «плеер разучился показывать длительность» без
+        // единой зацепки в логах.
+        func warnIfPresentButWrongType(_ key: String) {
+            if p[key] != nil {
+                NSLog("4elka: поле %@ в потоке плеера пришло неожиданного типа", key)
+            }
+        }
         func str(_ key: String, _ fallback: String?) -> String? {
-            p[key] as? String ?? (line.isDiff ? fallback : nil)
+            if let value = p[key] as? String { return value }
+            warnIfPresentButWrongType(key)
+            return line.isDiff ? fallback : nil
         }
         func num(_ key: String, _ fallback: TimeInterval?) -> TimeInterval? {
-            (p[key] as? NSNumber)?.doubleValue ?? (line.isDiff ? fallback : nil)
+            if let value = (p[key] as? NSNumber)?.doubleValue { return value }
+            warnIfPresentButWrongType(key)
+            return line.isDiff ? fallback : nil
         }
 
-        let stamp: Date?
-        if let raw = p["timestamp"] as? String {
-            stamp = ISO8601DateFormatter().date(from: raw)
+        // Опорная позиция и опорное время — ОДНА величина, а не две.
+        // Замерено на фикстуре: последняя строка потока приносит свежий timestamp
+        // без elapsedTime. Если обновить время, оставив старую позицию, живая позиция
+        // навсегда занижается на этот разрыв. Поэтому пара двигается только целиком
+        // и только когда пришла позиция; иначе остаётся прежней — от старой пары
+        // позиция считается верно, ведь трек всё это время играл.
+        let anchor: (elapsed: TimeInterval?, stamp: Date?)
+        if let elapsed = (p["elapsedTime"] as? NSNumber)?.doubleValue {
+            let raw = p["timestamp"] as? String
+            anchor = (elapsed, raw.flatMap { ISO8601DateFormatter().date(from: $0) })
+        } else if line.isDiff {
+            anchor = (base.elapsedAnchor, base.anchorTimestamp)
         } else {
-            stamp = line.isDiff ? base.anchorTimestamp : nil
+            anchor = (nil, nil)
         }
 
         let artwork: Data?
@@ -79,8 +101,8 @@ public struct NowPlaying: Equatable, Sendable {
             artist: str("artist", base.artist),
             album: str("album", base.album),
             duration: num("duration", base.duration),
-            elapsedAnchor: num("elapsedTime", base.elapsedAnchor),
-            anchorTimestamp: stamp,
+            elapsedAnchor: anchor.elapsed,
+            anchorTimestamp: anchor.stamp,
             isPlaying: p["playing"] as? Bool ?? (line.isDiff ? base.isPlaying : false),
             bundleIdentifier: str("bundleIdentifier", base.bundleIdentifier),
             artworkData: artwork)
