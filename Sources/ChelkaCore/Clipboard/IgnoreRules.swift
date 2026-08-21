@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 public struct IgnoreDecision: Equatable {
@@ -44,7 +45,24 @@ public struct IgnoreRules: Sendable {
             if id == own { return .init(reason: .ownApp) }
             if blocked.contains(id) { return .init(reason: .blockedApp) }
         }
-        if byteCount > maxBytes { return .init(reason: .tooLarge) }
+        if byteCount > sizeLimit(for: types) { return .init(reason: .tooLarge) }
         return .init(reason: nil)
     }
+
+    /// Картинки и текст мерятся разными пределами. Раньше предел был один,
+    /// картиночный: текст на сорок мегабайт проходил в историю, хотя лежать ему
+    /// предстояло прямо в `index.json`, который перезаписывается на каждое
+    /// изменение.
+    private func sizeLimit(for types: [String]) -> Int {
+        // Картиночный предел приходит снаружи — его крутит человек в настройках.
+        // Текстовый пока не настраивается, поэтому берётся из `Config`.
+        types.contains(where: Self.imageTypes.contains) ? maxBytes : Config.History.maxTextBytes
+    }
+
+    /// Ровно те два типа, которые `SystemPasteboard` читает как картинку. Список
+    /// обязан совпадать с ним, а не быть шире: предел должен выбираться по тому
+    /// же признаку, по которому запись потом становится картинкой, иначе решение
+    /// и хранение разойдутся.
+    private static let imageTypes: Set<String> = [NSPasteboard.PasteboardType.png.rawValue,
+                                                  NSPasteboard.PasteboardType.tiff.rawValue]
 }

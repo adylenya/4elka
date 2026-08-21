@@ -31,6 +31,28 @@ private func makeDragCoordinator() -> (ClipboardCoordinator, BlobStore, URL) {
     return (coordinator, blobs, dragRoot)
 }
 
+/// Один и тот же каталог на диске для проверок «пережило ли перезапуск»:
+/// `launch()` создаёт координатор заново, как при новом запуске приложения.
+@MainActor
+private final class Restartable {
+    let blobs: BlobStore
+    let index: HistoryIndex
+    private let capture: ClipboardCapture
+
+    init() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chelka-restart-\(UUID().uuidString)")
+        blobs = BlobStore(root: dir.appendingPathComponent("blobs"))
+        index = HistoryIndex(fileURL: dir.appendingPathComponent("index.json"), blobs: blobs)
+        capture = ClipboardCapture(rules: IgnoreRules(ownBundleID: "own"), blobs: blobs)
+    }
+
+    func launch() -> ClipboardCoordinator {
+        ClipboardCoordinator(capture: capture, index: index, blobs: blobs,
+                             activity: ActivityCenter(panelState: { .hidden }))
+    }
+}
+
 private func snap(_ text: String, app: String? = "com.apple.Safari") -> PasteboardSnapshot {
     PasteboardSnapshot(changeCount: 1, types: ["public.utf8-plain-text"], text: text,
                        imageData: nil, imageExtension: nil, fileURLs: [], sourceBundleID: app)
@@ -95,6 +117,100 @@ private func imageSnap(_ byte: UInt8) -> PasteboardSnapshot {
     let second = ClipboardCoordinator(capture: capture, index: index, blobs: blobs,
                                       activity: ActivityCenter(panelState: { .hidden }))
     #expect(second.history.items.first?.kind == .text("сохранись"))
+}
+
+/// Файл картинки нельзя удалять раньше, чем на диск лёг индекс без ссылок на
+/// него. Повторное копирование той же картинки — это дедуп: пишется новый блоб,
+/// прежний становится вытесненным, а запись индекса попадает в окно задержки.
+/// Удалив файл сразу, мы оставляли на диске индекс со ссылкой на исчезнувший
+/// файл — а такие элементы `load()` отбрасывает, и вся картинка пропадала.
+@Test @MainActor func imageSurvivesRestartWhenTheSameImageIsCopiedTwiceInARow() {
+    let disk = Restartable()
+    let first = disk.launch()
+    first.handle(imageSnap(1), now: Date())
+    first.handle(imageSnap(1), now: Date())
+    #expect(first.history.items.count == 1)
+
+    let second = disk.launch()
+
+    #expect(second.history.items.count == 1)
+    let name = second.history.items.first?.blobName ?? ""
+    #expect(disk.blobs.exists(name))
+}
+
+/// Удаление — это воля человека, и она обязана попадать на диск сразу. Пока
+/// удаление жило в окне задержки, скопированный пароль, стёртый из панели,
+/// возвращался в историю после перезапуска: то есть удаление личного просто
+/// не выполнялось.
+@Test @MainActor func removedItemDoesNotComeBackAfterRestart() {
+    let disk = Restartable()
+    let first = disk.launch()
+    first.handle(snap("пароль"), now: Date())
+    let id = first.history.items[0].id
+
+    first.remove(id)
+
+    #expect(disk.launch().history.items.isEmpty)
+}
+
+/// Закрепление — тоже воля человека, и его тоже нельзя оставлять в памяти.
+@Test @MainActor func pinSurvivesRestart() {
+    let disk = Restartable()
+    let first = disk.launch()
+    first.handle(snap("нужное"), now: Date())
+
+    first.pin(first.history.items[0].id)
+
+    #expect(disk.launch().history.items.first?.isPinned == true)
+}
+
+/// Второе копирование подряд попадает в окно задержки и живёт только в памяти.
+/// Выход из приложения обязан сбросить индекс на диск, иначе оно пропадает.
+@Test @MainActor func secondCopyInARowSurvivesTerminationBecauseIndexIsFlushed() {
+    let disk = Restartable()
+    let first = disk.launch()
+    first.handle(snap("раз"), now: Date())
+    first.handle(snap("два"), now: Date())
+
+    first.flush()
+
+    #expect(disk.launch().history.items.map(\.kind) == [.text("два"), .text("раз")])
+}
+
+/// Падение между записью файла и записью индекса оставляло файл на диске
+/// навсегда: `load()` отбрасывает элементы без файлов, а файлы без элементов
+/// не убирал никто. Потолок картинки — сорок мегабайт, так что каталог рос
+/// на каждом падении.
+@Test @MainActor func startupSweepsBlobsLeftBehindByACrash() {
+    let disk = Restartable()
+    let first = disk.launch()
+    first.handle(imageSnap(1), now: Date())   // индекс записан сразу
+    first.handle(imageSnap(2), now: Date())   // в окне задержки, до индекса не дошло
+    first.handle(imageSnap(3), now: Date())
+    #expect(first.history.items.count == 3)
+    #expect(disk.blobs.files().count == 3)
+
+    // «Падение»: процесс умер, отложенная запись индекса не состоялась.
+    let second = disk.launch()
+    #expect(second.history.items.count == 1)
+
+    second.collectOrphanBlobs(now: Date().addingTimeInterval(Config.History.orphanBlobGrace + 1))
+
+    #expect(disk.blobs.files().count == 1)
+    #expect(disk.blobs.exists(second.history.items[0].blobName ?? ""))
+}
+
+/// Уборка обязана щадить свежие файлы: файл картинки ложится на диск раньше
+/// индекса со ссылкой на него, и снести его в этом зазоре значит потерять
+/// только что скопированное.
+@Test @MainActor func startupSparesFilesTooFreshToBeOrphans() throws {
+    let disk = Restartable()
+    let coordinator = disk.launch()
+    let justWritten = try disk.blobs.write(Data([0x89, 0x50]), extension: "png")
+
+    coordinator.collectOrphanBlobs(now: Date())
+
+    #expect(disk.blobs.exists(justWritten))
 }
 
 @Test func cardTitleForImageMentionsScreenshotAndCarriesThumbnail() {
@@ -251,6 +367,11 @@ private func imageSnap(_ byte: UInt8) -> PasteboardSnapshot {
                                blobs: BlobStore(root: FileManager.default.temporaryDirectory))
 
     #expect(pb.string(forType: .string) == nil)
+    // И картинки там тоже нет: проверять только отсутствие текста мало —
+    // так тест прошёл бы и над буфером с чужими данными картинки.
+    #expect(pb.data(forType: .png) == nil)
+    #expect(pb.data(forType: .tiff) == nil)
+    #expect(pb.types?.isEmpty ?? true)
 }
 
 @Test func copyWritesFileURLsToGivenPasteboard() {

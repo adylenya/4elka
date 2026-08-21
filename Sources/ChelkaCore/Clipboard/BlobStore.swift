@@ -40,4 +40,34 @@ public struct BlobStore {
         let names = (try? fm.contentsOfDirectory(atPath: root.path)) ?? []
         delete(names)
     }
+
+    /// Что лежит в каталоге сейчас — с временем изменения каждого файла.
+    /// Нужно уборке: решить, какие файлы осиротели, можно только сравнив каталог
+    /// со ссылками из истории.
+    ///
+    /// Отсутствующий каталог — обычное дело до первой картинки, это пустой
+    /// список, а не ошибка. Всё остальное попадает в лог: молча вернуть пустой
+    /// список значило бы выдать нечитаемый каталог за убранный.
+    public func files() -> [BlobGarbage.File] {
+        guard fm.fileExists(atPath: root.path) else { return [] }
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+        let contents: [URL]
+        do {
+            contents = try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: Array(keys))
+        } catch {
+            NSLog("4elka: каталог картинок не читается, уборка пропущена: %@",
+                  String(describing: error))
+            return []
+        }
+        return contents.compactMap { url in
+            guard let modified = try? url.resourceValues(forKeys: keys).contentModificationDate else {
+                // Без времени изменения возраст не посчитать, а без возраста
+                // файл удалять нельзя — он может быть только что записанным.
+                NSLog("4elka: у файла %@ не читается время изменения, уборка его не трогает",
+                      url.lastPathComponent)
+                return nil
+            }
+            return BlobGarbage.File(name: url.lastPathComponent, modifiedAt: modified)
+        }
+    }
 }

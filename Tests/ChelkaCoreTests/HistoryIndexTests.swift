@@ -51,9 +51,53 @@ private func root() -> URL {
     #expect(index.load().items.isEmpty)
 }
 
-@Test func loadReturnsEmptyStoreOnCorruptIndex() throws {
+/// Недописанный файл — обрезанный ровно посередине — это то, как выглядит любой
+/// обрыв записи: кончилось место, паника ядра. Подменять его пустой историей
+/// нельзя: первая же запись затрёт файл, и пятьдесят записей исчезнут навсегда.
+/// Он обязан лечь в сторону целиком, до последнего байта.
+@Test func truncatedIndexIsSetAsideWithItsBytesIntact() throws {
     let dir = root()
     let file = dir.appendingPathComponent("index.json")
-    try Data("это не json".utf8).write(to: file)
-    #expect(HistoryIndex(fileURL: file, blobs: BlobStore(root: dir)).load().items.isEmpty)
+    let index = HistoryIndex(fileURL: file, blobs: BlobStore(root: dir))
+    let items = (0..<50).map { i in
+        ClipItem(id: UUID(), kind: .text("запись \(i)"), sourceAppBundleID: nil,
+                 createdAt: Date(timeIntervalSince1970: 1000), contentHash: "h\(i)",
+                 isPinned: i == 7)
+    }
+    try index.save(HistoryStore(items: items))
+    let whole = try Data(contentsOf: file)
+    let half = whole.prefix(whole.count / 2)
+    try Data(half).write(to: file)
+
+    #expect(index.load().items.isEmpty)
+
+    #expect(FileManager.default.fileExists(atPath: file.path) == false)
+    let setAside = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        .filter { $0.hasPrefix("index.json.broken-") }
+    #expect(setAside.count == 1)
+    let kept = try #require(setAside.first)
+    #expect(try Data(contentsOf: dir.appendingPathComponent(kept)) == Data(half))
 }
+
+/// Тот же путь ждёт будущую смену схемы `ClipItem`: разбор упадёт, и без
+/// откладывания в сторону вся история пропала бы при обновлении приложения.
+@Test func indexOfForeignSchemaIsSetAsideNotDropped() throws {
+    let dir = root()
+    let file = dir.appendingPathComponent("index.json")
+    try Data(#"[{"поле-из-будущего": 1}]"#.utf8).write(to: file)
+
+    #expect(HistoryIndex(fileURL: file, blobs: BlobStore(root: dir)).load().items.isEmpty)
+
+    #expect(FileManager.default.fileExists(atPath: file.path) == false)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        .contains { $0.hasPrefix("index.json.broken-") })
+}
+
+/// Имя отложенного файла — чистая функция: исходное имя остаётся целиком, чтобы
+/// человек нашёл файл глазами, а метка времени говорит, когда индекс сломался.
+@Test func brokenNameKeepsOriginalNameAndCarriesTimestamp() {
+    let name = HistoryIndex.brokenName(for: "index.json", at: Date(timeIntervalSince1970: 0))
+    #expect(name.hasPrefix("index.json.broken-"))
+    #expect(name == "index.json.broken-1970-01-01-060000")
+}
+

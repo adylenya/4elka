@@ -38,6 +38,23 @@ private let rules = IgnoreRules(ownBundleID: "com.adylenya.4elka")
     #expect(d.reason == nil)
 }
 
+/// У текста свой предел, и он строже: текст лежит в `index.json` прямо в тексте,
+/// а файл перезаписывается на каждое изменение истории. Раньше текст мерился
+/// пределом для картинки, и дамп на сорок мегабайт спокойно проходил в историю.
+@Test func oversizedTextIsJudgedByItsOwnLimit() {
+    #expect(rules.decide(types: ["public.utf8-plain-text"], sourceBundleID: nil,
+                         byteCount: Config.History.maxTextBytes + 1).reason == .tooLarge)
+    #expect(rules.decide(types: ["public.utf8-plain-text"], sourceBundleID: nil,
+                         byteCount: Config.History.maxTextBytes).shouldStore)
+}
+
+/// И обратное: картинку нельзя мерить пределом текста — обычный снимок большого
+/// экрана крупнее двух мегабайт, и отказывать в нём нечего.
+@Test func pictureLargerThanTheTextLimitIsStillStored() {
+    #expect(rules.decide(types: ["public.png"], sourceBundleID: nil,
+                         byteCount: Config.History.maxTextBytes + 1).shouldStore)
+}
+
 @Test func payloadAtExactLimitIsStored() {
     #expect(rules.decide(types: ["public.png"], sourceBundleID: nil,
                          byteCount: Config.History.maxImageBytes).shouldStore)

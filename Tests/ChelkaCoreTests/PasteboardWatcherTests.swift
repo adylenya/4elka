@@ -99,6 +99,10 @@ private func snap(types: [String], text: String? = nil, image: Data? = nil,
     #expect(seen == [3])
 }
 
+/// Второй `start()` не должен оставлять второй живой таймер: `stop()` погасил бы
+/// только последний, а первый опрашивал бы буфер до конца работы приложения.
+/// Раньше этот тест не проверял вообще ничего — он оставался зелёным и без
+/// защиты от повторного запуска.
 @Test @MainActor func watcherStartIsIdempotent() {
     final class Fake: PasteboardReading {
         func snapshot() -> PasteboardSnapshot {
@@ -107,11 +111,22 @@ private func snap(types: [String], text: String? = nil, image: Data? = nil,
         }
     }
     let watcher = PasteboardWatcher(reader: Fake())
+
     watcher.start()
+    let started = watcher.timer
+    #expect(started?.isValid == true)
+
     watcher.start()
+    #expect(watcher.timer === started)
+
     watcher.stop()
+    #expect(watcher.timer == nil)
+    // Тот самый таймер погашен, а не просто забыт.
+    #expect(started?.isValid == false)
+
     // Второй stop не должен ничего ломать.
     watcher.stop()
+    #expect(watcher.timer == nil)
 }
 
 @Test @MainActor func watcherDoesNotReportUnchangedClipboard() {

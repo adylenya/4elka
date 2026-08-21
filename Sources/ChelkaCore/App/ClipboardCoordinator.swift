@@ -11,6 +11,10 @@ public final class ClipboardCoordinator: ObservableObject {
     private let activity: ActivityCenter
     private let dragRoot: URL
     private var saveWork: DispatchWorkItem?
+    /// Файлы картинок, которых в истории уже нет, но удалять их пока рано:
+    /// индекс на диске всё ещё может на них ссылаться. Список разбирается сразу
+    /// после успешной записи индекса — см. `persist()`.
+    private var blobsToDelete: [String] = []
 
     /// Кому сообщить, что очередная запись в буфер — наша собственная.
     /// Без этого наблюдатель увидит её как чужое копирование, вернёт элемент
@@ -35,7 +39,7 @@ public final class ClipboardCoordinator: ObservableObject {
         let result = capture.capture(snapshot, into: history, now: now)
         guard let item = result.inserted else { return }
         history = result.store
-        blobs.delete(result.evictedBlobNames)
+        blobsToDelete += result.evictedBlobNames
         activity.submit(Self.activityEvent(for: item), now: now)
         scheduleSave()
     }
@@ -48,8 +52,14 @@ public final class ClipboardCoordinator: ObservableObject {
         let next = history.applyingQuotas(quotas)
         guard next != before else { return }
         history = next
-        blobs.delete(next.evictedBlobNames(comparedTo: before))
-        scheduleSave()
+        // Имена вытесненных файлов складываем в очередь на удаление, а не
+        // удаляем сразу: файл нельзя убирать, пока индекс, который на него
+        // ссылается, не лёг на диск. Иначе после выхода в неудачный момент
+        // история теряет запись целиком.
+        blobsToDelete += next.evictedBlobNames(comparedTo: before)
+        // Уменьшение квоты — воля человека из настроек, а не поток копирований:
+        // пишем сразу.
+        saveNow()
     }
 
     /// Полная очистка по кнопке из настроек. При первом запуске приложение
@@ -63,16 +73,20 @@ public final class ClipboardCoordinator: ObservableObject {
     /// если приложение выключат в следующую секунду.
     public func clearHistory() {
         history = HistoryStore()
+        // Очередь на удаление больше не нужна: сносим каталог целиком, и в нём
+        // всё равно не останется ни одного файла — включая те, что ждали записи.
+        blobsToDelete = []
+        // Индекс пишем ПЕРВЫМ: если приложение выключат между двумя строками,
+        // пустой индекс с уже стёртыми файлами безопасен, а полный индекс без
+        // файлов — это потерянные записи, которые загрузка молча выбросит.
+        saveNow()
         blobs.removeAll()
-        do {
-            try index.save(history)
-        } catch {
-            NSLog("4elka: не удалось сохранить пустой индекс: %@", String(describing: error))
-        }
     }
 
-    public func pin(_ id: UUID) { history = history.pinning(id); scheduleSave() }
-    public func unpin(_ id: UUID) { history = history.unpinning(id); scheduleSave() }
+    // Закрепление — воля человека, а не поток копирований: пишем сразу, без
+    // задержки. Иначе закрепление не выживало выхода из приложения.
+    public func pin(_ id: UUID) { history = history.pinning(id); saveNow() }
+    public func unpin(_ id: UUID) { history = history.unpinning(id); saveNow() }
 
     public func remove(_ id: UUID) { remove([id]) }
 
@@ -83,8 +97,8 @@ public final class ClipboardCoordinator: ObservableObject {
         guard !ids.isEmpty else { return }
         let before = history
         history = ids.reduce(history) { $0.removing($1) }
-        blobs.delete(history.evictedBlobNames(comparedTo: before))
-        scheduleSave()
+        blobsToDelete += history.evictedBlobNames(comparedTo: before)
+        saveNow()
     }
 
     /// `⌘P` по выделению. Если хоть один элемент не закреплён — закрепляем всё
@@ -96,7 +110,7 @@ public final class ClipboardCoordinator: ObservableObject {
         let selected = ids.compactMap { id in history.items.first { $0.id == id } }
         let shouldPin = selected.contains { !$0.isPinned }
         history = ids.reduce(history) { shouldPin ? $0.pinning($1) : $0.unpinning($1) }
-        scheduleSave()
+        saveNow()
     }
 
     /// Обычный клик по плитке: содержимое уходит в системный буфер, дальше
@@ -211,22 +225,77 @@ public final class ClipboardCoordinator: ObservableObject {
         }
     }
 
+    /// Убрать файлы картинок, которых больше никто не держит. Зовётся при старте,
+    /// сразу после загрузки истории: элементы без файлов история отбрасывает сама,
+    /// а файлы без элементов убрать больше нечем — они оставались от каждого
+    /// падения между записью файла и записью индекса.
+    ///
+    /// Файлы, ждущие удаления после записи индекса, тоже считаются удерживаемыми:
+    /// индекс на диске всё ещё может на них ссылаться, и снести их раньше записи
+    /// значило бы потерять запись целиком.
+    public func collectOrphanBlobs(now: Date = Date()) {
+        let held = Set(history.items.compactMap(\.blobName)).union(blobsToDelete)
+        let orphans = BlobGarbage.collectable(files: blobs.files(), referenced: held, now: now)
+        guard !orphans.isEmpty else { return }
+        NSLog("4elka: убрано осиротевших файлов картинок: %d", orphans.count)
+        blobs.delete(orphans)
+    }
+
+    /// Сбросить историю на диск немедленно. Зовётся при выходе из приложения:
+    /// всё, что попало в окно задержки и живёт только в памяти, иначе пропало бы.
+    public func flush() { saveNow() }
+
+    /// Немедленная запись: отложенная запись отменяется, чтобы не сработать
+    /// вторым разом впустую. Так пишется всё, что выражает волю человека —
+    /// удаление и закрепление: задержка нужна только потоку копирований,
+    /// а не решениям, которые человек принял руками.
+    private func saveNow() {
+        saveWork?.cancel()
+        saveWork = nil
+        persist()
+    }
+
     /// Индекс пишется с задержкой: при быстрой серии копирований файл не должен
     /// перезаписываться пять раз в секунду. Первое изменение после затишья
     /// сохраняется сразу — иначе один-единственный клип, скопированный прямо
     /// перед выходом из приложения, мог бы не долежать до диска. Всё, что
     /// прилетает внутри окна `indexWriteDebounce` после этого, схлопывается
-    /// в одну финальную запись по истечении окна.
+    /// в одну финальную запись по истечении окна — а если приложение закроется
+    /// раньше, эту запись выполнит `flush()`.
     private func scheduleSave() {
         guard saveWork == nil else { return }
-        try? index.save(history)
+        persist()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.saveWork = nil
-            try? self.index.save(self.history)
+            self.persist()
         }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Config.History.indexWriteDebounce,
                                       execute: work)
+    }
+
+    /// Пишет индекс и только после успешной записи убирает файлы картинок,
+    /// на которые в нём больше нет ссылок.
+    ///
+    /// Порядок здесь важнее удобства. Удалив файл раньше записи, мы оставляли бы
+    /// на диске индекс со ссылкой на исчезнувший файл — а такие элементы `load()`
+    /// отбрасывает, то есть закреплённая картинка пропадала бы целиком. Если
+    /// запись не удалась, файлы остаются на месте и ждут следующей попытки:
+    /// лишний файл на диске несравнимо дешевле потерянной записи.
+    ///
+    /// Отказ диска не глотаем: без записи в лог сбой выглядел бы как успех,
+    /// а история молча оставалась бы только в памяти.
+    private func persist() {
+        do {
+            try index.save(history)
+        } catch {
+            NSLog("4elka: индекс истории не записан, изменения остались только в памяти: %@",
+                  String(describing: error))
+            return
+        }
+        let names = blobsToDelete
+        blobsToDelete = []
+        blobs.delete(names)
     }
 }

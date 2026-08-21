@@ -70,12 +70,18 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Долгоживущие ресурсы гасим сами: регистрация хоткея живёт в системе, а
     /// таймер и наблюдатель за буфером продолжали бы тикать во время выхода.
+    ///
+    /// И последнее дело перед выходом — сбросить историю на диск. Запись индекса
+    /// отложена на секунду, чтобы серия копирований не перезаписывала файл пять
+    /// раз в секунду; всё, что попало в это окно, живёт только в памяти и без
+    /// сброса пропало бы вместе с процессом.
     public func applicationWillTerminate(_ notification: Notification) {
         panelHotkey?.unregister()
         panelHotkey = nil
         activityTimer?.invalidate()
         activityTimer = nil
         pasteboardWatcher?.stop()
+        clipboardCoordinator?.flush()
     }
 
     private func setUpShelf() {
@@ -166,6 +172,11 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         let coordinator = ClipboardCoordinator(capture: capture, index: index, blobs: blobs,
                                                activity: activityCenter)
         clipboardCoordinator = coordinator
+        // История уже загружена, и это единственный момент, когда видно оба
+        // берега сразу: и ссылки из истории, и файлы в каталоге. Файл, на который
+        // ссылок не осталось, убрать больше нечем — он остаётся от каждого
+        // падения между записью картинки и записью индекса.
+        coordinator.collectOrphanBlobs()
 
         let watcher = PasteboardWatcher()
         watcher.onChange = { [weak self, weak coordinator] snapshot in

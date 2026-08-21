@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AppKit
 @testable import ChelkaCore
 
 /// Настройки бесполезны, если их никто не читает. Здесь проверяется, что
@@ -42,9 +43,15 @@ private final class SeenBox {
     var s = Settings.defaults
     s.maxImageMegabytes = 1
     let rules = s.ignoreRules
-    #expect(rules.decide(types: [], sourceBundleID: nil, byteCount: 2 * 1024 * 1024).reason
+    // Тип обязателен: у текста и у картинки разные пределы, и потолок из
+    // настроек относится именно к картинке. Раньше тест передавал пустой список
+    // типов и потому проверял вовсе не то, что обещает названием.
+    let picture = [NSPasteboard.PasteboardType.png.rawValue]
+    #expect(rules.decide(types: picture, sourceBundleID: nil, byteCount: 2 * 1024 * 1024).reason
             == .tooLarge)
-    #expect(rules.decide(types: [], sourceBundleID: nil, byteCount: 500).shouldStore)
+    #expect(rules.decide(types: picture, sourceBundleID: nil, byteCount: 500).shouldStore)
+    // Текст мерится своим пределом, и потолок картинки его не задевает.
+    #expect(rules.decide(types: [], sourceBundleID: nil, byteCount: 2 * 1024 * 1024).shouldStore)
 }
 
 /// Собственные записи отбрасываются при любых настройках: этот признак идёт
