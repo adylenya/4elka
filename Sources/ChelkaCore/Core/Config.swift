@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import Foundation
 
 /// Единственное место, где живут константы. Магических чисел в коде быть не должно.
@@ -100,6 +101,17 @@ public enum Config {
         /// верху экрана), и стык должен читаться как продолжение самой челки,
         /// а не как отдельная скруглённая панель.
         public static let notchCornerRadius: CGFloat = 10
+    }
+
+    /// Глобальное сочетание клавиш, раскрывающее и складывающее панель.
+    public enum Hotkey {
+        /// ⌘⇧V. Тот же V, что в системной «вставке без форматирования», —
+        /// человек уже привык тянуться к нему за буфером.
+        public static let defaultKeyCode = UInt32(kVK_ANSI_V)
+        public static let defaultModifiers = UInt32(cmdKey | shiftKey)
+        /// Подпись владельца регистрации в Carbon: четыре байта '4ELK'.
+        /// Carbon требует именно четырёхбуквенный код, а не строку.
+        public static let signature = OSType(0x34454C4B)
     }
 
     public enum Media {
