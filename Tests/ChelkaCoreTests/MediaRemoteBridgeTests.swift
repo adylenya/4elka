@@ -130,6 +130,33 @@ private func bridge(_ launcher: FakeLauncher,
     #expect(titles.isEmpty)
 }
 
+// MARK: - Перезапуск начинает разбор с чистого листа
+
+/// Процесс умер посреди строки, в буфере остался огрызок. Первая строка нового
+/// процесса — ПОЛНЫЙ снимок состояния, единственный за сеанс. Приклеенный
+/// огрызок делал её неразбираемой, и дальше все диффы ложились на СТАРОЕ
+/// состояние: панель уверенно показывала прошлый трек сколько угодно долго.
+@Test @MainActor func firstSnapshotOfNewProcessIsNotGluedToLeftoversOfTheDeadOne() async {
+    let launcher = FakeLauncher()
+    let b = bridge(launcher)
+    var titles: [String?] = []
+    b.start(onState: { titles.append($0.title) }, onUnavailable: {})
+    #expect(launcher.waitForAttempt())
+    let first = try! #require(launcher.last)
+
+    first.handlers.output(Data((#"{"diff":false,"payload":{"title":"Старый","artist":"А"}}"# +
+                                "\n" + #"{"diff":false,"payl"#).utf8))
+    first.handlers.exit(first.id)
+    #expect(launcher.waitForAttempt())
+    let second = try! #require(launcher.last)
+
+    second.handlers.output(Data((#"{"diff":false,"payload":{"title":"Новый","artist":"Б"}}"# + "\n").utf8))
+    b.waitForPendingWork()
+    await settle()
+
+    #expect(titles.last == "Новый")
+}
+
 /// Свой собственный обработчик мост обязан обработать: процесс умер — перезапуск.
 @Test @MainActor func exitOfCurrentProcessLeadsToRestart() {
     let launcher = FakeLauncher()
