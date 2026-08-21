@@ -2,14 +2,26 @@ import AppKit
 
 /// Окно панели, растущей вниз от челки.
 ///
-/// `canBecomeKey` обязан быть `true` — иначе поиск по истории (следующие
-/// задачи) не сможет принять ни одного нажатия клавиши. Панель при этом не
-/// забирает активацию у чужого приложения: за это отвечают стиль
-/// `.nonactivatingPanel` здесь и `setActivationPolicy(.accessory)` в точке
-/// входа приложения.
+/// Клавиатуру окно может забрать только в раскрытом состоянии, где живёт
+/// поле поиска по истории — `canBecomeKey` зависит от состояния, а не
+/// возвращает `true` безусловно. Раньше было наоборот, и выезжающая карточка
+/// перехватывала набор текста у человека, который в этот момент печатал.
+/// Панель при этом не забирает активацию у чужого приложения: за это
+/// отвечают стиль `.nonactivatingPanel` здесь и `setActivationPolicy(.accessory)`
+/// в точке входа приложения.
 @MainActor
 public final class NotchPanel: NSPanel {
-    public override var canBecomeKey: Bool { true }
+    /// Разрешение брать клавиатуру нужно ровно в одном состоянии — раскрытом,
+    /// где есть поле поиска. Раньше оно выдавалось всегда, и выезжающая карточка
+    /// перехватывала набор текста у человека, который в этот момент печатал.
+    /// `nonisolated`, потому что это чистая функция состояния: она не трогает
+    /// ни окно, ни его поля, и тест обязан звать её без главного актора.
+    public nonisolated static func allowsKeyboard(in state: PanelState) -> Bool {
+        state == .expanded
+    }
+
+    private var keyboardAllowed = false
+    public override var canBecomeKey: Bool { keyboardAllowed }
     public override var canBecomeMain: Bool { false }
 
     public init(geometry: NotchGeometry) {
@@ -24,7 +36,16 @@ public final class NotchPanel: NSPanel {
         hasShadow = false
         isMovable = false
         hidesOnDeactivate = false
+        becomesKeyOnlyIfNeeded = true
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+    }
+
+    /// Разрешить или запретить окну становиться клавиатурным. Если разрешение
+    /// снимается, а окно уже успело стать key — отдаём фокус немедленно, а не
+    /// ждём следующего клика в чужом приложении.
+    public func setKeyboardAllowed(_ allowed: Bool) {
+        keyboardAllowed = allowed
+        if !allowed, isKeyWindow { resignKey() }
     }
 
     /// Панель растёт вниз от верхнего края экрана, поэтому меняем и origin, и size.
