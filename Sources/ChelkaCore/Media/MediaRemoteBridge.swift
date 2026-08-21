@@ -133,6 +133,17 @@ public final class MediaRemoteBridge: @unchecked Sendable {
 
     /// Вызывается только на очереди супервизора.
     private func handleExitLocked(_ finished: AdapterProcessID) {
+        // Обработчик ЧУЖОГО процесса игнорируется целиком: ни teardown, ни
+        // счётчик отказов. `stop()` гасит процесс, сигнал доходит асинхронно —
+        // и обработчик уже мёртвого p1 приезжает, когда работает поднятый
+        // заново p2. Раньше он убивал живого p2, засчитывал это мгновенным
+        // отказом и растил задержку, хотя адаптер был полностью здоров.
+        // Очередь супервизора тут не помогает: она даёт порядок, но не
+        // тождество процесса.
+        guard finished == currentID else {
+            log("завершение пришло от прошлого процесса адаптера, игнорирую")
+            return
+        }
         let lifetime = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         teardownLocked()
         // Проверка стоит ЗДЕСЬ, а не только перед постановкой задержки: раньше
@@ -174,6 +185,10 @@ public final class MediaRemoteBridge: @unchecked Sendable {
 
     /// Вызывается только на очереди супервизора.
     private func consumeLocked(_ chunk: Data, from id: AdapterProcessID) {
+        // Кусок из трубы прошлого процесса — тот же случай, что и чужое
+        // завершение: он уже был поставлен в очередь, когда процесс умер.
+        // В буфер живого его пускать нельзя, там он склеится с чужой строкой.
+        guard id == currentID else { return }
         let lines = buffer.appending(chunk)
         guard !lines.isEmpty else { return }
         for line in lines {
