@@ -45,9 +45,13 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Стекло с семантическим текстом внутри. Своих цветов не заводим — тема
     /// системная, и переключение светлая/тёмная должно достаться бесплатно.
+    /// Раскладка идёт по `NotchLayout.inPanel`, а не занимает всё окно целиком:
+    /// текст сидит в теле, под челкой, а полосы слева и справа от неё
+    /// зарезервированы под короткие виджеты (время, погода, заряд) — их
+    /// подключит отдельная задача, но место под них уже не перекрывает челка.
     private func defaultContentView() -> NSView {
         NSHostingView(rootView: GlassPanel {
-            Text("4elka").foregroundStyle(.primary).padding(8)
+            NotchPanelContent(geometry: geometry)
         })
     }
 
@@ -98,8 +102,8 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private func renderActivity() {
         guard let panel, let blobs else { return }
         if let event = activityCenter.queue.current {
-            panel.contentView = NSHostingView(rootView: GlassPanel {
-                ActivityCardView(event: event, blobs: blobs)
+            panel.contentView = NSHostingView(rootView: NotchContinuationFigure {
+                ActivityFigureContent(event: event, blobs: blobs, geometry: geometry)
             })
         } else if machine.state == .activity {
             panel.contentView = defaultContentView()
@@ -109,7 +113,17 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
 
     private func apply(_ transition: (PanelStateMachine) -> PanelStateMachine) {
         machine = transition(machine)
+        // Меню статус-бара и зона-триггер обновляются даже без панели — иначе
+        // при отсутствующем окне (например, до первого запуска) аварийный
+        // выход и зона над челкой молча замирали бы в устаревшем состоянии.
+        // Зона-триггер молчит, пока панель раскрыта, чтобы не воровать у неё мышь.
+        trigger?.setInteractive(machine.state != .expanded)
+        refreshStatusItem()
         guard let panel else { return }
+        // Клавиатуру панель берёт только в раскрытом состоянии — во всех
+        // остальных выезжающая карточка не должна перехватывать набор текста
+        // у человека, который в этот момент печатает в другом приложении.
+        panel.setKeyboardAllowed(NotchPanel.allowsKeyboard(in: machine.state))
         switch machine.state {
         case .hidden:
             // Панель убирается совсем, а не сжимается в полоску. Сжатая полоска
@@ -120,17 +134,16 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
             panel.resize(to: geometry.rect.size, geometry: geometry)
             panel.orderFrontRegardless()
         case .activity:
-            // Шире самой челки — иначе карточке негде показать текст и миниатюру.
-            panel.resize(to: activityPanelSize, geometry: geometry)
+            // Верх карточки — низ челки, а не верх экрана: иначе первая строка
+            // карточки физически прячется за самой челкой.
+            panel.setFrame(NotchLayout.cardFrame(size: activityPanelSize, geometry: geometry),
+                           display: true, animate: false)
             panel.orderFrontRegardless()
         case .expanded:
             panel.resize(to: Config.Notch.expandedSize, geometry: geometry)
             panel.orderFrontRegardless()
             panel.makeKey()
         }
-        // Зона-триггер молчит, пока панель раскрыта, чтобы не воровать у неё мышь.
-        trigger?.setInteractive(machine.state != .expanded)
-        refreshStatusItem()
     }
 
     private var activityPanelSize: CGSize {
@@ -171,6 +184,77 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
             refreshStatusItem()
         case .quit:
             NSApp.terminate(nil)
+        }
+    }
+}
+
+/// Заглушка основного содержимого панели, раскладывающая себя по
+/// `NotchLayout.inPanel` вместо того, чтобы занимать окно целиком. Место
+/// в теле — под челкой — уже гарантированно не перекрыто ею; полосы слева
+/// и справа от челки существуют, но пока пустые: подключить туда время,
+/// погоду и заряд — отдельная задача, а не эта.
+///
+/// `GeometryReader` берёт актуальный размер контейнера на каждый рендер, а
+/// не размер на момент создания — так раскладка остаётся верной, когда
+/// `GlassPanel` растягивает это же вью при переходе peek → expanded.
+private struct NotchPanelContent: View {
+    let geometry: NotchGeometry
+
+    var body: some View {
+        GeometryReader { proxy in
+            let layout = NotchLayout.inPanel(size: proxy.size, geometry: geometry)
+            Text("4elka")
+                .foregroundStyle(.primary)
+                .padding(8)
+                .frame(width: layout.body.width, height: layout.body.height)
+                .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
+        }
+    }
+}
+
+/// «Фигура», продолжающая физическую челку в стороны и вниз, а не отдельная
+/// плашка под ней. Стык с настоящей челкой должен быть незаметен, поэтому
+/// фон здесь — единственный явно заданный (не семантический) цвет в проекте:
+/// чёрный в любой теме, а не адаптивный `.primary`/`.secondary`. Форсируем
+/// тёмную схему для содержимого сверху, чтобы `.foregroundStyle(.primary)` там
+/// оставалось читаемым семантическим текстом, а не белым на белом в светлой теме.
+/// Скруглены только нижние углы (`notchCornerRadius`) — верхние прижаты к
+/// самому верху экрана, где скругление было бы не видно.
+private struct NotchContinuationFigure<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .colorScheme(.dark)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black)
+            .clipShape(UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: Config.Notch.notchCornerRadius,
+                bottomTrailingRadius: Config.Notch.notchCornerRadius,
+                topTrailingRadius: 0))
+    }
+}
+
+/// Содержимое фигуры-карточки: сама карточка сидит в теле, под челкой — там,
+/// где `NotchLayout.inPanel` её не перекрывает. Крылья слева и справа от
+/// челки зарезервированы (`cardFrame` гарантирует им место), но пока пустые:
+/// подключить туда время, погоду и заряд — отдельная задача, а не эта.
+private struct ActivityFigureContent: View {
+    let event: ActivityEvent
+    let blobs: BlobStore
+    let geometry: NotchGeometry
+
+    var body: some View {
+        GeometryReader { proxy in
+            let layout = NotchLayout.inPanel(size: proxy.size, geometry: geometry)
+            ActivityCardView(event: event, blobs: blobs)
+                .frame(width: layout.body.width, height: layout.body.height)
+                .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
         }
     }
 }

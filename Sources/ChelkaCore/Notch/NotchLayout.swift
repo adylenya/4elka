@@ -10,13 +10,22 @@ public struct NotchLayout: Equatable, Sendable {
     /// Всё, что ниже челки — основное место панели.
     public let body: CGRect
 
-    /// Верх карточки — это низ челки, а не верх экрана. Иначе первая строка
-    /// карточки физически прячется за челкой.
+    /// Фигура закреплена у ВЕРХА экрана и расширяет челку в стороны и вниз,
+    /// чтобы та перестала быть заметной. Ниже челки смещается только
+    /// содержимое — этим занимается `inPanel`.
+    ///
+    /// Раньше здесь верх карточки совпадал с низом челки. Это было ошибкой:
+    /// карточка выглядела отдельной плашкой, а челка оставалась видна.
     public static func cardFrame(size: CGSize, geometry: NotchGeometry) -> CGRect {
-        CGRect(x: geometry.rect.midX - size.width / 2,
-               y: geometry.rect.minY - size.height,
-               width: size.width,
-               height: size.height)
+        // Крылья обязаны существовать всегда: в них живёт короткое, и без них
+        // фигура не расширяет челку, а просто висит под ней.
+        let minWidth = geometry.rect.width + Config.Notch.wingWidth * 2
+        let width = max(size.width, minWidth)
+        let height = max(size.height, geometry.rect.height + 1)
+        return CGRect(x: geometry.rect.midX - width / 2,
+                      y: geometry.rect.maxY - height,
+                      width: width,
+                      height: height)
     }
 
     /// Координаты внутри панели: начало слева снизу, как в AppKit.
