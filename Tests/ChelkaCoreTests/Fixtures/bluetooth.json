@@ -1,0 +1,25 @@
+{
+  "SPBluetoothDataType": [
+    {
+      "controller_properties": {
+        "controller_chipset": "BCM_4387",
+        "controller_discoverable": "attrib_off",
+        "controller_state": "attrib_on",
+        "controller_supportedServices": "0x392039 < HFP AVRCP A2DP HID Braille LEA AACP GATT SerialPort >",
+        "controller_transport": "PCIe"
+      },
+      "device_connected": [
+        {
+          "AirPods 3": {
+            "device_batteryLevelLeft": "51%",
+            "device_batteryLevelRight": "52%",
+            "device_caseVersion": "65.5.0",
+            "device_minorType": "Headphones",
+            "device_rssi": "-54",
+            "device_services": "0x980019 < HFP AVRCP A2DP AACP GATT ACL >"
+          }
+        }
+      ]
+    }
+  ]
+}

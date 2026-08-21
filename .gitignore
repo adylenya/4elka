@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+build/
+vendor/build/
+vendor/mediaremote-adapter/
+*.app
+.DS_Store
