@@ -28,12 +28,23 @@ public final class MediaCoordinator: ObservableObject {
     /// накопление их всех за долгую работу приложения было бы утечкой.
     private var artworkCache: [String: NSImage] = [:]
 
+    /// Идентичность, для которой обложка уже не разобралась. Без этой памяти
+    /// один и тот же битый мегабайт разбирался бы заново на каждом обновлении
+    /// позиции — то есть раз в секунду у играющего трека.
+    private var failedArtworkIdentity: String?
+
+    /// Разбор картинки — параметром, а не жёстко `NSImage(data:)`: иначе
+    /// «разобрали один раз, а не двадцать» нечем проверить тестом.
+    private let decodeArtwork: (Data) -> NSImage?
+
     public init(source: MediaSource,
                 panelState: @escaping () -> PanelState,
-                submitActivity: @escaping (ActivityEvent) -> Void) {
+                submitActivity: @escaping (ActivityEvent) -> Void,
+                decodeArtwork: @escaping (Data) -> NSImage? = { NSImage(data: $0) }) {
         self.source = source
         self.panelState = panelState
         self.submitActivity = submitActivity
+        self.decodeArtwork = decodeArtwork
     }
 
     /// Захват слабый. Сильный убрал бы возможность проверить, что освобождённый
@@ -80,14 +91,25 @@ public final class MediaCoordinator: ObservableObject {
     private func updateArtworkCache(for new: NowPlaying) {
         guard let identity = new.trackIdentity else {
             artworkCache = [:]
+            failedArtworkIdentity = nil
             return
         }
         guard artworkCache[identity] == nil else { return }
-        guard let data = new.artworkData, let image = NSImage(data: data) else {
+        // Разбор этой обложки уже провалился — второй раз он провалится так же,
+        // а стоит это разбора мегабайта на каждое обновление позиции.
+        guard failedArtworkIdentity != identity else { return }
+        guard let data = new.artworkData else {
             artworkCache = [:]
             return
         }
+        guard let image = decodeArtwork(data) else {
+            NSLog("4elka: обложка трека не разобралась (%d байт), больше не пробую", data.count)
+            artworkCache = [:]
+            failedArtworkIdentity = identity
+            return
+        }
         artworkCache = [identity: image]
+        failedArtworkIdentity = nil
     }
 
     /// `nonisolated`, потому что тест из брифа зовёт её синхронно без

@@ -107,6 +107,44 @@ private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
     #expect(!c.isAvailable)
 }
 
+// MARK: - Обложка
+
+private func stateWithArtwork(_ data: Data, elapsed: TimeInterval) -> NowPlaying {
+    NowPlaying(title: "Т", artist: "И", album: nil, duration: 100,
+               elapsedAnchor: elapsed, anchorTimestamp: Date(timeIntervalSince1970: 0),
+               isPlaying: true, bundleIdentifier: "ru.yandex.desktop.music", artworkData: data)
+}
+
+/// Битая обложка разбиралась заново на каждом обновлении позиции — то есть раз
+/// в секунду один и тот же мегабайт.
+@Test @MainActor func brokenArtworkIsDecodedOnlyOncePerTrack() {
+    let source = FakeSource()
+    var attempts = 0
+    let c = MediaCoordinator(source: source, panelState: { .hidden },
+                            submitActivity: { _ in },
+                            decodeArtwork: { _ in attempts += 1; return nil })
+    c.start()
+    let broken = Data([0x00, 0x01, 0x02])
+    for elapsed in [1.0, 2.0, 3.0] { source.emit(stateWithArtwork(broken, elapsed: elapsed)) }
+    #expect(attempts == 1)
+    #expect(c.artwork == nil)
+}
+
+/// Новый трек — новая попытка: отказ помнится ровно для одной идентичности.
+@Test @MainActor func nextTrackGetsItsOwnArtworkAttempt() {
+    let source = FakeSource()
+    var attempts = 0
+    let c = MediaCoordinator(source: source, panelState: { .hidden },
+                            submitActivity: { _ in },
+                            decodeArtwork: { _ in attempts += 1; return nil })
+    c.start()
+    source.emit(stateWithArtwork(Data([0x00]), elapsed: 1))
+    source.emit(NowPlaying(title: "Другой", artist: "И", album: nil, duration: 100,
+                           elapsedAnchor: 1, anchorTimestamp: nil, isPlaying: true,
+                           bundleIdentifier: nil, artworkData: Data([0x00])))
+    #expect(attempts == 2)
+}
+
 /// Пустое название и непустой исполнитель давали карточку с пустой первой
 /// строкой — она читается как поломка приложения.
 @Test func activityEventNeverHasEmptyTitle() {
