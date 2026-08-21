@@ -15,25 +15,39 @@ public protocol MediaSource: AnyObject {
 /// Поток приходит кусками, которые не совпадают с границами строк.
 struct LineBuffer {
     private var pending = Data()
+    /// Куда ругаться на выброшенное. Параметром, а не сразу `NSLog`: иначе
+    /// «об этом сказано в лог» нечем проверить, и молчание вернётся незаметно.
+    private let warn: (String) -> Void
+
+    init(warn: @escaping (String) -> Void = { NSLog("4elka: %@", $0) }) {
+        self.warn = warn
+    }
 
     mutating func appending(_ chunk: Data) -> [String] {
         pending.append(chunk)
-        // Поток без единого перевода строки иначе съел бы всю память.
-        // Такого не бывает при здоровом адаптере, поэтому это защита от чужой
-        // поломки, а не штатный путь: недособранное выбрасываем и говорим об этом.
-        if pending.count > Config.Media.maxPendingBytes {
-            NSLog("4elka: поток плеера прислал %d байт без перевода строки, сбрасываю буфер",
-                  pending.count)
-            pending = Data()
-            return []
-        }
+        // Сначала нарезка, и только потом порог. Наоборот было нельзя: проверка
+        // до нарезки выбрасывала весь кусок целиком — вместе с валидной строкой,
+        // приехавшей в нём же рядом с началом (или хвостом) очень длинной.
+        // Длинные строки тут штатны: обложка идёт в потоке как base64.
         var lines: [String] = []
         while let index = pending.firstIndex(of: UInt8(ascii: "\n")) {
             let raw = pending[pending.startIndex..<index]
             pending = pending[pending.index(after: index)...]
-            if let text = String(data: raw, encoding: .utf8), !text.isEmpty {
-                lines.append(text)
+            guard let text = String(data: raw, encoding: .utf8) else {
+                // Молчать нельзя: битая кодировка в потоке — это либо поломка
+                // адаптера, либо смена формата, и без строчки в логе она
+                // выглядит как «плеер иногда пропускает обновления».
+                warn("строка потока плеера не в UTF-8, отброшено байт: \(raw.count)")
+                continue
             }
+            if !text.isEmpty { lines.append(text) }
+        }
+        // Порог применяется только к НЕДОСОБРАННОМУ остатку: поток без единого
+        // перевода строки иначе съел бы всю память. Такого не бывает при здоровом
+        // адаптере — это защита от чужой поломки, а не штатный путь.
+        if pending.count > Config.Media.maxPendingBytes {
+            warn("поток плеера прислал \(pending.count) байт без перевода строки, сбрасываю остаток")
+            pending = Data()
         }
         return lines
     }
