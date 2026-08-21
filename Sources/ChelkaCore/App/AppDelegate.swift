@@ -51,12 +51,18 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Долгоживущие ресурсы гасим сами: регистрация хоткея живёт в системе, а
     /// таймер и наблюдатель за буфером продолжали бы тикать во время выхода.
+    ///
+    /// И последнее дело перед выходом — сбросить историю на диск. Запись индекса
+    /// отложена на секунду, чтобы серия копирований не перезаписывала файл пять
+    /// раз в секунду; всё, что попало в это окно, живёт только в памяти и без
+    /// сброса пропало бы вместе с процессом.
     public func applicationWillTerminate(_ notification: Notification) {
         panelHotkey?.unregister()
         panelHotkey = nil
         activityTimer?.invalidate()
         activityTimer = nil
         pasteboardWatcher?.stop()
+        clipboardCoordinator?.flush()
     }
 
     /// Стекло с семантическим текстом внутри. Своих цветов не заводим — тема
