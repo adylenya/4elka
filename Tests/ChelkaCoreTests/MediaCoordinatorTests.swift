@@ -23,8 +23,7 @@ private func state(title: String?, artist: String? = "и", playing: Bool,
 private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
     let source = FakeSource()
     var events: [ActivityEvent] = []
-    let c = MediaCoordinator(source: source, panelState: { .hidden },
-                            submitActivity: { events.append($0) })
+    let c = MediaCoordinator(source: source, submitActivity: { events.append($0) })
     c.start()
     return (c, source, { events })
 }
@@ -66,8 +65,7 @@ private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
     let source = FakeSource()
     var events: [ActivityEvent] = []
     do {
-        let c = MediaCoordinator(source: source, panelState: { .hidden },
-                                submitActivity: { events.append($0) })
+        let c = MediaCoordinator(source: source, submitActivity: { events.append($0) })
         c.start()
         source.emit(state(title: "Первый", playing: true))
         #expect(events.count == 1)
@@ -101,7 +99,7 @@ private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
 
 @Test @MainActor func marksUnavailableWhenAdapterFails() {
     let source = FakeSource()
-    let c = MediaCoordinator(source: source, panelState: { .hidden }, submitActivity: { _ in })
+    let c = MediaCoordinator(source: source, submitActivity: { _ in })
     c.start()
     source.onUnavailable?()
     #expect(!c.isAvailable)
@@ -120,8 +118,7 @@ private func stateWithArtwork(_ data: Data, elapsed: TimeInterval) -> NowPlaying
 @Test @MainActor func brokenArtworkIsDecodedOnlyOncePerTrack() {
     let source = FakeSource()
     var attempts = 0
-    let c = MediaCoordinator(source: source, panelState: { .hidden },
-                            submitActivity: { _ in },
+    let c = MediaCoordinator(source: source, submitActivity: { _ in },
                             decodeArtwork: { _ in attempts += 1; return nil })
     c.start()
     let broken = Data([0x00, 0x01, 0x02])
@@ -134,8 +131,7 @@ private func stateWithArtwork(_ data: Data, elapsed: TimeInterval) -> NowPlaying
 @Test @MainActor func nextTrackGetsItsOwnArtworkAttempt() {
     let source = FakeSource()
     var attempts = 0
-    let c = MediaCoordinator(source: source, panelState: { .hidden },
-                            submitActivity: { _ in },
+    let c = MediaCoordinator(source: source, submitActivity: { _ in },
                             decodeArtwork: { _ in attempts += 1; return nil })
     c.start()
     source.emit(stateWithArtwork(Data([0x00]), elapsed: 1))

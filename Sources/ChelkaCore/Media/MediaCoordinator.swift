@@ -16,7 +16,6 @@ public final class MediaCoordinator: ObservableObject {
     @Published public private(set) var isAvailable = true
 
     private let source: MediaSource
-    private let panelState: () -> PanelState
     private let submitActivity: (ActivityEvent) -> Void
     private var lastTrackIdentity: String?
     private var lastPlaying: Bool?
@@ -37,12 +36,14 @@ public final class MediaCoordinator: ObservableObject {
     /// «разобрали один раз, а не двадцать» нечем проверить тестом.
     private let decodeArtwork: (Data) -> NSImage?
 
+    /// Состояния панели здесь нет намеренно: координатор его не читал ни разу,
+    /// а поле, которое только присваивают, следующий читатель принимает за
+    /// работающую логику и строит на нём решения. Кому нужно знать, раскрыта ли
+    /// панель (например, полосе позиции), тот получает это состояние сам.
     public init(source: MediaSource,
-                panelState: @escaping () -> PanelState,
                 submitActivity: @escaping (ActivityEvent) -> Void,
                 decodeArtwork: @escaping (Data) -> NSImage? = { NSImage(data: $0) }) {
         self.source = source
-        self.panelState = panelState
         self.submitActivity = submitActivity
         self.decodeArtwork = decodeArtwork
     }
