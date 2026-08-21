@@ -63,6 +63,17 @@ import Foundation
     #expect(Transformations.available(for: "обычный текст").contains(.base64Encode))
 }
 
+@Test func doesNotOfferTransformationsThatChangeNothing() {
+    // Пункт, который ничего не меняет, в меню не нужен: экранирование URL
+    // «успешно» применяется к простому слову и возвращает его же.
+    let plain = Transformations.available(for: "simpleword")
+    #expect(!plain.contains(.urlEncode))
+    #expect(!plain.contains(.urlDecode))
+    // А там, где менять есть что, пункт остаётся.
+    #expect(Transformations.available(for: "a b&c").contains(.urlEncode))
+    #expect(Transformations.available(for: "a%20b").contains(.urlDecode))
+}
+
 @Test func stripFormattingKeepsPlainCharacters() {
     let rtf = try! NSAttributedString(string: "жирный текст")
         .data(from: NSRange(location: 0, length: 12),

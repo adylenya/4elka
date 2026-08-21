@@ -37,8 +37,15 @@ public enum Transformations {
         }
     }
 
+    /// Только те преобразования, которые реально что-то меняют. Проверки на `nil`
+    /// недостаточно: экранирование URL «успешно» применяется к любому тексту без
+    /// процентов и алфавитно-цифровому, возвращая его же — и пункт висел бы в меню
+    /// всегда, ничего не делая. Мёртвые пункты — это то, ради чего метод и нужен.
     public static func available(for input: String) -> [Transformation] {
-        Transformation.allCases.filter { apply($0, to: input) != nil }
+        Transformation.allCases.filter { transformation in
+            guard let result = apply(transformation, to: input) else { return false }
+            return result != input
+        }
     }
 
     private static func json(_ input: String, pretty: Bool) -> String? {
@@ -73,13 +80,17 @@ public enum Transformations {
         return Data(base64Encoded: s)
     }
 
+    /// Порог, с которого число трактуется как миллисекунды. Секунды столько знаков
+    /// не набирают: 12 знаков в секундах — это год 33 000-й.
+    private static let millisecondDigitThreshold = 12
+
     private static func timestamp(_ input: String) -> String? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let raw = Double(trimmed), trimmed.allSatisfy({ $0.isNumber || $0 == "-" }) else {
             return nil
         }
-        // 13 знаков — миллисекунды: иначе 1755777600000 превратится в 55-й век.
-        let seconds = trimmed.count >= 12 ? raw / 1000 : raw
+        // Длинное число — миллисекунды: иначе 1755777600000 превратится в 55-й век.
+        let seconds = trimmed.count >= millisecondDigitThreshold ? raw / 1000 : raw
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         formatter.timeZone = TimeZone(identifier: Config.timezone)
