@@ -5,3 +5,4 @@ vendor/build/
 vendor/mediaremote-adapter/
 *.app
 .DS_Store
+.claude/worktrees/
