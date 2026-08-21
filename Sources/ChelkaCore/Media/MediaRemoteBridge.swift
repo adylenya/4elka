@@ -31,26 +31,43 @@ public final class MediaRemoteBridge: MediaSource, @unchecked Sendable {
     public var onUnavailable: (() -> Void)?
 
     private let paths: AdapterPaths
+    /// Всё изменяемое состояние живёт на одной последовательной очереди.
+    /// Обработчик завершения процесса Foundation вызывает на произвольной очереди,
+    /// поэтому «честное слово» о потокобезопасности здесь не работает: без этой
+    /// очереди чтение флага остановки было бы настоящей гонкой.
+    private let supervision = DispatchQueue(label: "chelka.media.supervision")
     private var process: Process?
     private var pipe: Pipe?
+    private var startedAt: Date?
     private var state = NowPlaying.empty
     private var buffer = LineBuffer()
-    private var restartDelay: TimeInterval = 1
+    private var policy = RestartPolicy.initial
     private var stopped = false
 
     public init(paths: AdapterPaths) { self.paths = paths }
 
     public func start() {
-        stopped = false
-        launch()
+        supervision.async { [self] in
+            stopped = false
+            policy = .initial
+            launchLocked()
+        }
     }
 
     public func stop() {
-        stopped = true
+        supervision.async { [self] in
+            stopped = true
+            teardownLocked()
+        }
+    }
+
+    /// Снимает обработчик чтения и гасит процесс. Идемпотентно.
+    private func teardownLocked() {
         pipe?.fileHandleForReading.readabilityHandler = nil
-        process?.terminate()
-        process = nil
         pipe = nil
+        if let running = process, running.isRunning { running.terminate() }
+        process = nil
+        startedAt = nil
     }
 
     public func send(_ command: MediaCommand) {
@@ -59,45 +76,88 @@ public final class MediaRemoteBridge: MediaSource, @unchecked Sendable {
         p.arguments = [paths.script.path, paths.framework.path, "send", String(command.rawValue)]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
-        try? p.run()
+        do {
+            try p.run()
+        } catch {
+            NSLog("4elka: команда плееру %d не ушла: %@",
+                  command.rawValue, String(describing: error))
+        }
     }
 
-    private func launch() {
+    /// Вызывается только на очереди супервизора.
+    private func launchLocked() {
+        // Без этой проверки повторный `start()` или перезапуск, обогнавший его,
+        // оставили бы два живых процесса: старый осиротел бы вместе со своим
+        // обработчиком чтения, и оба писали бы в один буфер.
+        guard process == nil, !stopped else { return }
+
+        // Отсутствующий адаптер даёт коварный случай: сам perl на месте, запуск
+        // «удаётся», а процесс умирает мгновенно. Без этой проверки приложение
+        // молча дёргало бы его вечно, ни разу не сказав, что плеера нет.
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: paths.script.path),
+              fm.fileExists(atPath: paths.framework.path) else {
+            NSLog("4elka: адаптер плеера не найден по пути %@", paths.script.path)
+            reportUnavailable()
+            return
+        }
+
         let p = Process()
-        let newPipe = Pipe()
+        let outputPipe = Pipe()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
         p.arguments = [paths.script.path, paths.framework.path, "stream"]
-        p.standardOutput = newPipe
+        p.standardOutput = outputPipe
         p.standardError = FileHandle.nullDevice
 
-        newPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
-            self?.consume(chunk)
+            guard !chunk.isEmpty, let self else { return }
+            self.supervision.async { self.consumeLocked(chunk) }
         }
 
         p.terminationHandler = { [weak self] _ in
-            // На EOF дескриптор остаётся «готов к чтению» и без явного снятия
-            // обработчик будет вызываться в цикле бесконечно после смерти процесса.
-            newPipe.fileHandleForReading.readabilityHandler = nil
-            guard let self, !self.stopped else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restartDelay) {
-                self.restartDelay = min(self.restartDelay * 2, 30)
-                self.launch()
-            }
+            guard let self else { return }
+            self.supervision.async { self.handleExitLocked() }
         }
 
         do {
             try p.run()
             process = p
-            pipe = newPipe
-            restartDelay = 1
+            pipe = outputPipe
+            startedAt = Date()
         } catch {
-            DispatchQueue.main.async { [weak self] in self?.onUnavailable?() }
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            NSLog("4elka: не удалось запустить поток плеера: %@", String(describing: error))
+            reportUnavailable()
         }
     }
 
-    private func consume(_ chunk: Data) {
+    /// Вызывается только на очереди супервизора.
+    private func handleExitLocked() {
+        let lifetime = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+        teardownLocked()
+        // Проверка стоит ЗДЕСЬ, а не только перед постановкой задержки: раньше
+        // отложенный перезапуск успевал сработать уже после остановки и поднимал
+        // новый процесс, то есть `stop()` ничего не останавливал.
+        guard !stopped else { return }
+
+        policy = policy.afterExit(livedFor: lifetime)
+        guard !policy.shouldGiveUp else {
+            NSLog("4elka: поток плеера падает сразу при запуске, прекращаю попытки")
+            reportUnavailable()
+            return
+        }
+        supervision.asyncAfter(deadline: .now() + policy.delay) { [self] in
+            launchLocked()
+        }
+    }
+
+    private func reportUnavailable() {
+        DispatchQueue.main.async { [weak self] in self?.onUnavailable?() }
+    }
+
+    /// Вызывается только на очереди супервизора.
+    private func consumeLocked(_ chunk: Data) {
         let lines = buffer.appending(chunk)
         guard !lines.isEmpty else { return }
         for line in lines {

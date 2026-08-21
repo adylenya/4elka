@@ -39,4 +39,20 @@ public enum Config {
         public static let fallbackHeight: CGFloat = 32
         public static let expandedSize = CGSize(width: 640, height: 340)
     }
+
+    public enum Media {
+        /// Поток без единого перевода строки — либо баг адаптера, либо чужая
+        /// поломка. Не даём буферу расти неограниченно в ожидании перевода строки.
+        public static let maxPendingBytes = 1 * 1024 * 1024
+        /// Первая пауза перед перезапуском упавшего процесса.
+        public static let restartDelayInitial: TimeInterval = 1
+        /// Потолок экспоненциального роста паузы между перезапусками.
+        public static let restartDelayMax: TimeInterval = 30
+        /// Процесс, проживший дольше этого срока, считается здоровым запуском —
+        /// политика перезапуска сбрасывается в исходную.
+        public static let healthyRunGrace: TimeInterval = 5
+        /// Столько мгновенных смертей подряд означает, что адаптер отсутствует
+        /// или сломан — дальше пытаться бессмысленно.
+        public static let maxImmediateFailures = 5
+    }
 }
