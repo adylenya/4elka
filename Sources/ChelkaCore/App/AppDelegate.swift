@@ -55,6 +55,29 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         })
     }
 
+    /// Содержимое раскрытой панели — сетка истории. Пока буфер не поднят
+    /// (первые мгновения после запуска), показываем то же, что и всегда:
+    /// сетка без координатора существовать не может.
+    private func expandedContentView() -> NSView {
+        guard let coordinator = clipboardCoordinator, let blobs else {
+            return defaultContentView()
+        }
+        return NSHostingView(rootView: GlassPanel {
+            HistoryPanelContent(coordinator: coordinator, blobs: blobs, geometry: geometry,
+                                onClose: { [weak self] in self?.dismissPanelSoon() })
+        })
+    }
+
+    /// Закрытие приходит из обработчика внутри самой сетки, а гашение панели
+    /// сносит хостинг-вью этой сетки. Делать это посреди её же события —
+    /// напрашиваться на падение, поэтому переход откладывается на следующий
+    /// проход цикла событий.
+    private func dismissPanelSoon() {
+        DispatchQueue.main.async { [weak self] in
+            self?.apply { $0.dismissed() }
+        }
+    }
+
     private func setUpClipboard() {
         let blobs = BlobStore(root: AppPaths.blobs)
         self.blobs = blobs
@@ -73,6 +96,13 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         }
         watcher.start()
         pasteboardWatcher = watcher
+        // Клик по элементу истории пишет в буфер сам. Без этой связки
+        // наблюдатель увидит нашу же запись как чужое копирование: элемент
+        // вернётся в историю, а карточка «скопировано» выедет ровно в тот
+        // момент, когда панель закрывается.
+        coordinator.reportSelfWrite = { [weak watcher] count in
+            watcher?.ignoreSelfWrite(changeCount: count)
+        }
 
         activityTimer = Timer.scheduledTimer(withTimeInterval: Config.Activity.tickInterval,
                                              repeats: true) { [weak self] _ in
@@ -112,6 +142,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func apply(_ transition: (PanelStateMachine) -> PanelStateMachine) {
+        let previous = machine.state
         machine = transition(machine)
         // Меню статус-бара и зона-триггер обновляются даже без панели — иначе
         // при отсутствующем окне (например, до первого запуска) аварийный
@@ -124,6 +155,15 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         // остальных выезжающая карточка не должна перехватывать набор текста
         // у человека, который в этот момент печатает в другом приложении.
         panel.setKeyboardAllowed(NotchPanel.allowsKeyboard(in: machine.state))
+        // Содержимое пересобирается только на самом переходе в раскрытое
+        // состояние и из него. Пересборка на каждый вызов `apply` обнуляла бы
+        // строку поиска, выделение и фокус — а зовут его в том числе на
+        // наведение мыши, то есть десятки раз подряд.
+        if machine.state == .expanded, previous != .expanded {
+            panel.contentView = expandedContentView()
+        } else if previous == .expanded, machine.state != .expanded {
+            panel.contentView = defaultContentView()
+        }
         switch machine.state {
         case .hidden:
             // Панель убирается совсем, а не сжимается в полоску. Сжатая полоска
@@ -207,6 +247,25 @@ private struct NotchPanelContent: View {
             Text("4elka")
                 .foregroundStyle(.primary)
                 .padding(8)
+                .frame(width: layout.body.width, height: layout.body.height)
+                .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
+        }
+    }
+}
+
+/// Сетка истории, посаженная в тело панели — под челку. Крылья слева и справа
+/// от челки сетке не отдаются: плитка в полосе высотой с челку не читается,
+/// а само тело панели раскрытой на `expandedSize` вполне достаточно.
+private struct HistoryPanelContent: View {
+    let coordinator: ClipboardCoordinator
+    let blobs: BlobStore
+    let geometry: NotchGeometry
+    let onClose: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let layout = NotchLayout.inPanel(size: proxy.size, geometry: geometry)
+            HistoryGridView(coordinator: coordinator, blobs: blobs, onClose: onClose)
                 .frame(width: layout.body.width, height: layout.body.height)
                 .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
         }
