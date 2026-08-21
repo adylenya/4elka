@@ -80,6 +80,30 @@ private func fixtureLines() throws -> [String] {
     #expect(position == 12.0)
 }
 
+@Test func replaysFixtureAndPositionReflectsTimestampOnlyUpdate() throws {
+    var state = NowPlaying.empty
+    for line in try fixtureLines() {
+        if let parsed = NowPlayingLine.parse(line) { state = state.applying(parsed) }
+    }
+    // Последняя строка фикстуры несёт свежий timestamp (10:49:57Z) без elapsedTime.
+    // Опорная пара должна остаться от предыдущей строки (36.670384 / 10:49:55Z),
+    // поэтому позиция в момент реального прихода этой строки — 38.670384
+    // (плюс двухсекундный разрыв), а не застрявшие на месте 36.670384.
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-08-21T10:49:57Z"))
+    let position = try #require(state.position(at: now))
+    #expect(abs(position - 38.670384) < 0.01)
+}
+
+@Test func diffWithTimestampButNoElapsedTimeLeavesAnchorUnchanged() {
+    var state = NowPlaying.empty
+    state = state.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"т","playing":true,"elapsedTime":10.0,"timestamp":"1970-01-01T00:00:10Z"}}"#)!)
+    state = state.applying(NowPlayingLine.parse(
+        #"{"diff":true,"payload":{"timestamp":"1970-01-01T00:00:20Z"}}"#)!)
+    #expect(state.elapsedAnchor == 10.0)
+    #expect(state.anchorTimestamp == Date(timeIntervalSince1970: 10))
+}
+
 @Test func trackIdentityIgnoresContentItemIdentifier() {
     // Замер на фикстуре: contentItemIdentifier меняется при каждом обновлении состояния,
     // поэтому идентичность трека — это название плюс исполнитель.
