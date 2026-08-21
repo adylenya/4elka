@@ -31,12 +31,19 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         guard let panel else { return }
         switch machine.state {
         case .hidden:
-            panel.resize(to: CGSize(width: geometry.rect.width, height: 1), geometry: geometry)
+            // Панель убирается совсем, а не сжимается в полоску. Сжатая полоска
+            // оставалась клавиатурным окном: нажатия пользователя улетали в
+            // невидимую щель вместо его приложения.
+            panel.orderOut(nil)
         case .peek, .activity:
             panel.resize(to: geometry.rect.size, geometry: geometry)
+            panel.orderFrontRegardless()
         case .expanded:
             panel.resize(to: Config.Notch.expandedSize, geometry: geometry)
+            panel.orderFrontRegardless()
             panel.makeKey()
         }
+        // Зона-триггер молчит, пока панель раскрыта, чтобы не воровать у неё мышь.
+        trigger?.setInteractive(machine.state != .expanded)
     }
 }
