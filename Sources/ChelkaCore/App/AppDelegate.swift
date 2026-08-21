@@ -134,8 +134,8 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
             panel.resize(to: geometry.rect.size, geometry: geometry)
             panel.orderFrontRegardless()
         case .activity:
-            // Верх карточки — низ челки, а не верх экрана: иначе первая строка
-            // карточки физически прячется за самой челкой.
+            // Фигура прижата к верху экрана и продолжает челку. Содержимое при
+            // этом лежит ниже челки — за это отвечает раскладка, а не рамка.
             panel.setFrame(NotchLayout.cardFrame(size: activityPanelSize, geometry: geometry),
                            display: true, animate: false)
             panel.orderFrontRegardless()
@@ -149,7 +149,8 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private var activityPanelSize: CGSize {
         CGSize(width: max(geometry.rect.width + Config.Activity.cardExtraWidth,
                           Config.Activity.cardMinWidth),
-              height: Config.Activity.cardHeight)
+               height: NotchLayout.cardHeight(contentHeight: Config.Activity.cardBodyHeight,
+                                              geometry: geometry))
     }
 
     private func refreshStatusItem() {

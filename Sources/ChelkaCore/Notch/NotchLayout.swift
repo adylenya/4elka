@@ -28,6 +28,14 @@ public struct NotchLayout: Equatable, Sendable {
                       height: height)
     }
 
+    /// Высота фигуры под содержимое заданной высоты. Содержимое живёт ПОД
+    /// челкой, поэтому её высоту надо прибавить, а не надеяться, что содержимое
+    /// уместится в общую высоту: замерено на живом экране — фигура 54 точки при
+    /// челке 38 оставляла содержимому 16, и вторая строка карточки обрезалась.
+    public static func cardHeight(contentHeight: CGFloat, geometry: NotchGeometry) -> CGFloat {
+        contentHeight + (geometry.hasPhysicalNotch ? geometry.rect.height : 0)
+    }
+
     /// Координаты внутри панели: начало слева снизу, как в AppKit.
     public static func inPanel(size: CGSize, geometry: NotchGeometry) -> NotchLayout {
         guard geometry.hasPhysicalNotch else {

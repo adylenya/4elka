@@ -79,3 +79,30 @@ private var measured: NotchGeometry {
     }
     #expect(NotchPanel.allowsKeyboard(in: .expanded))
 }
+
+@Test func cardHeightAddsTheNotchOnTopOfTheContent() {
+    // Замерено на живом экране: фигура высотой 54 точки при челке 38 оставляла
+    // содержимому 16 точек, и вторая строка карточки («скопировано») обрезалась
+    // нижним краем фигуры. Высоту челки надо прибавлять к высоте содержимого,
+    // а не рассчитывать, что содержимое поместится в общую высоту.
+    let content: CGFloat = 50
+    let height = NotchLayout.cardHeight(contentHeight: content, geometry: measured)
+    #expect(height == content + measured.rect.height)
+
+    let frame = NotchLayout.cardFrame(size: CGSize(width: 320, height: height),
+                                      geometry: measured)
+    let layout = NotchLayout.inPanel(size: frame.size, geometry: measured)
+    #expect(layout.body.height == content)
+}
+
+@Test func cardHeightOnScreenWithoutNotchIsTheContentAlone() {
+    let plain = NotchGeometry(rect: CGRect(x: 850, y: 1048, width: 220, height: 32),
+                              hasPhysicalNotch: false)
+    #expect(NotchLayout.cardHeight(contentHeight: 50, geometry: plain) == 50)
+}
+
+@Test func activityContentIsTallEnoughForIconAndTwoLines() {
+    // Карточка рисует миниатюру 34 точки и вертикальные отступы по 8 —
+    // ниже этого содержимое обрезается независимо от раскладки.
+    #expect(Config.Activity.cardBodyHeight >= 34 + 8 * 2)
+}

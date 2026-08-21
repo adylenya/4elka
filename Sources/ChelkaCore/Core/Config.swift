@@ -34,7 +34,11 @@ public enum Config {
         public static let cardExtraWidth: CGFloat = 260
         /// Минимальная ширина карточки на экранах без физической челки.
         public static let cardMinWidth: CGFloat = 320
-        public static let cardHeight: CGFloat = 54
+        /// Высота содержимого карточки — полосы ПОД челкой, а не всей фигуры.
+        /// Общая высота считается в `NotchLayout.cardHeight`: к этому числу
+        /// прибавляется высота самой челки. Минимум диктует рисование:
+        /// миниатюра 34 точки плюс отступы по 8.
+        public static let cardBodyHeight: CGFloat = 50
     }
 
     public enum Weather {
