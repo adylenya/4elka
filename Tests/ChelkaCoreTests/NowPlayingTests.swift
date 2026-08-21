@@ -130,6 +130,35 @@ private func fixtureLines() throws -> [String] {
     #expect(a.trackIdentity == b.trackIdentity)
 }
 
+// MARK: - Штамп времени
+
+/// Проверено: разбор ISO8601 по умолчанию НЕ берёт дробные секунды, а адаптер
+/// их присылает. Опорное время терялось, и живая позиция замирала у играющего
+/// трека — молча.
+@Test func fractionalSecondsInTimestampAreAccepted() throws {
+    let state = NowPlaying.empty.applying(NowPlayingLine.parse(#"""
+    {"diff":false,"payload":{"title":"т","playing":true,"elapsedTime":10.0,"timestamp":"1970-01-01T00:00:10.500Z"}}
+    """#)!)
+    #expect(state.anchorTimestamp != nil)
+    let position = try #require(state.position(at: Date(timeIntervalSince1970: 20)))
+    #expect(abs(position - 19.5) < 0.01)
+}
+
+@Test func unparsableTimestampIsReportedInsteadOfSilence() {
+    var messages: [String] = []
+    let line = NowPlayingLine.parse(#"""
+    {"diff":false,"payload":{"title":"т","playing":true,"elapsedTime":10.0,"timestamp":"вчера"}}
+    """#)!
+    let state = NowPlaying.empty.applying(line, warn: { messages.append($0) })
+    #expect(state.anchorTimestamp == nil)
+    #expect(messages.count == 1)
+}
+
+@Test func plainTimestampStillParses() {
+    #expect(NowPlaying.timestamp(from: "1970-01-01T00:00:10Z") == Date(timeIntervalSince1970: 10))
+    #expect(NowPlaying.timestamp(from: "не время") == nil)
+}
+
 // MARK: - Пустая строка — это отсутствие значения, а не значение
 
 @Test func emptyTitleIsTreatedAsMissing() {

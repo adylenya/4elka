@@ -61,6 +61,20 @@ public struct NowPlaying: Equatable, Sendable {
         return "\(title ?? "")—\(artist ?? "")"
     }
 
+    /// Разбор штампа времени из потока.
+    ///
+    /// Проверено: разбор ISO8601 по умолчанию НЕ берёт дробные секунды, а
+    /// адаптер их присылает (`…:55.123Z`). Поэтому сначала обычный формат,
+    /// потом тот же с дробными — иначе опорное время терялось, и живая позиция
+    /// замирала у играющего трека.
+    static func timestamp(from raw: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        if let date = plain.date(from: raw) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: raw)
+    }
+
     /// Обрезанная строка либо `nil`, если после обрезки ничего не осталось.
     static func meaningful(_ raw: String?) -> String? {
         guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -76,7 +90,10 @@ public struct NowPlaying: Equatable, Sendable {
         return min(max(0, value), duration)
     }
 
-    public func applying(_ line: NowPlayingLine) -> NowPlaying {
+    /// `warn` — куда ругаться на сломанный формат. Параметром, а не сразу
+    /// `NSLog`: иначе «об этом сказано в лог» нечем проверить тестом.
+    public func applying(_ line: NowPlayingLine,
+                         warn: (String) -> Void = { NSLog("4elka: %@", $0) }) -> NowPlaying {
         let base = line.isDiff ? self : NowPlaying.empty
         let p = line.payload
 
@@ -89,7 +106,7 @@ public struct NowPlaying: Equatable, Sendable {
         // тревогой ровно там, где мы хотели видеть настоящую.
         func warnIfPresentButWrongType(_ key: String) {
             guard let value = p[key], !(value is NSNull) else { return }
-            NSLog("4elka: поле %@ в потоке плеера пришло неожиданного типа", key)
+            warn("поле \(key) в потоке плеера пришло неожиданного типа")
         }
         func str(_ key: String, _ fallback: String?) -> String? {
             // Пустая (и пробельная) строка — отсутствие значения, а не значение:
@@ -114,7 +131,14 @@ public struct NowPlaying: Equatable, Sendable {
         if let elapsed = (p["elapsedTime"] as? NSNumber)?.doubleValue {
             let raw = p["timestamp"] as? String
             if raw == nil { warnIfPresentButWrongType("timestamp") }
-            anchor = (elapsed, raw.flatMap { ISO8601DateFormatter().date(from: $0) })
+            let stamp = raw.flatMap(NowPlaying.timestamp(from:))
+            // Без опорного времени живая позиция замирает у играющего трека.
+            // Молчать об этом нельзя: снаружи это выглядит как «плеер иногда
+            // залипает», а причина — одна неразобранная строка.
+            if let raw, stamp == nil {
+                warn("штамп времени в потоке плеера не разобрался: \(raw)")
+            }
+            anchor = (elapsed, stamp)
         } else if line.isDiff {
             // Именно эти два поля меняются чаще всего при смене формата в системе,
             // поэтому молчать о них нельзя — их разбор идёт отдельной ветвью и общие
