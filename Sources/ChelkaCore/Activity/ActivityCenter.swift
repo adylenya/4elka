@@ -7,11 +7,25 @@ import Foundation
 public final class ActivityCenter: ObservableObject {
     @Published public private(set) var queue = ActivityQueue()
     private let panelState: () -> PanelState
+    private let settings: () -> Settings
 
-    public init(panelState: @escaping () -> PanelState) { self.panelState = panelState }
+    /// Настройки читаются замыканием, а не копируются при создании: человек
+    /// правит их в открытом окне, и следующее же событие обязано считаться с
+    /// новым значением, без перезапуска приложения.
+    public init(panelState: @escaping () -> PanelState,
+                settings: @escaping () -> Settings = { .defaults }) {
+        self.panelState = panelState
+        self.settings = settings
+    }
 
     public func submit(_ event: ActivityEvent, now: Date = Date()) {
-        queue = queue.submitting(event, now: now, panel: panelState())
+        let current = settings()
+        // Выключенный источник отбрасывается на входе, а не проигрывает по
+        // приоритету: иначе событие, оказавшееся приоритетнее показанного,
+        // всё равно перебило бы его, будучи выключенным.
+        guard current.allowsCard(event.kind) else { return }
+        queue = queue.submitting(event, now: now, panel: panelState(),
+                                 duration: current.activityDuration)
     }
 
     public func tick(now: Date = Date()) {

@@ -31,4 +31,13 @@ public struct BlobStore {
     public func delete(_ blobNames: [String]) {
         for name in blobNames { try? fm.removeItem(at: url(for: name)) }
     }
+
+    /// Снести всё содержимое каталога. Нужно очистке истории: удалять только
+    /// то, на что ссылается индекс, недостаточно — файл, потерявший запись
+    /// (сбой на середине, правка индекса руками), остался бы навсегда, а
+    /// человек, нажавший «Очистить историю», вправе ожидать пустоту.
+    public func removeAll() {
+        let names = (try? fm.contentsOfDirectory(atPath: root.path)) ?? []
+        delete(names)
+    }
 }

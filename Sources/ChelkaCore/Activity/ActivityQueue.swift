@@ -11,11 +11,13 @@ public struct ActivityQueue: Equatable, Sendable {
         self.deadline = deadline
     }
 
-    public func submitting(_ event: ActivityEvent, now: Date, panel: PanelState) -> ActivityQueue {
+    /// `duration` приходит снаружи: время жизни карточки крутится в настройках,
+    /// а значение из `Config` остаётся значением по умолчанию.
+    public func submitting(_ event: ActivityEvent, now: Date, panel: PanelState,
+                           duration: TimeInterval = Config.Activity.duration) -> ActivityQueue {
         guard panel != .expanded else { return self }
         if let shown = current, shown.kind > event.kind { return self }
-        return ActivityQueue(current: event,
-                             deadline: now.addingTimeInterval(Config.Activity.duration))
+        return ActivityQueue(current: event, deadline: now.addingTimeInterval(duration))
     }
 
     public func ticking(now: Date) -> ActivityQueue {

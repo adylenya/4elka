@@ -6,6 +6,14 @@ public enum Config {
     /// Общая таймзона приложения: её используют и погода, и преобразование времени.
     public static let timezone = "Asia/Almaty"
 
+    /// Секунд в минуте. Настройки погоды человек крутит в минутах, а таймеры
+    /// живут в секундах — перевод должен называться, а не стоять числом.
+    public static let secondsInMinute: TimeInterval = 60
+
+    /// Байт в мегабайте. Настройки крутят потолок размера в мегабайтах —
+    /// человек понимает «40», а не «41943040».
+    public static let bytesInMegabyte = 1024 * 1024
+
     /// Идентификатор бандла самого приложения — по нему `IgnoreRules` отличает
     /// собственные записи в буфере (например, клик по элементу истории) от чужих.
     public static let ownBundleID = "com.adylenya.4elka"
@@ -14,7 +22,7 @@ public enum Config {
         public static let textLimit = 200
         public static let imageLimit = 30
         public static let fileLimit = 50
-        public static let maxImageBytes = 40 * 1024 * 1024
+        public static let maxImageBytes = 40 * Config.bytesInMegabyte
         public static let pollInterval: TimeInterval = 0.2
         public static let indexWriteDebounce: TimeInterval = 1.0
     }
@@ -92,10 +100,103 @@ public enum Config {
     public enum Weather {
         public static let latitude = 51.1605
         public static let longitude = 71.4704
+        /// Подпись к координатам по умолчанию. В настройках город выбирается
+        /// по названию, а не вводом чисел, поэтому имя нужно и в Config.
+        public static let cityName = "Астана"
         public static let refreshInterval: TimeInterval = 15 * 60
         /// С какого возраста данные считаются устаревшими и показываются с пометкой.
         public static let staleAfter: TimeInterval = 60 * 60
         public static let plausibleCelsius = -70.0 ... 60.0
+    }
+
+    /// Календарь: первый день недели, когда человек задаёт его вручную, а не
+    /// берёт из системы. Двойка — понедельник (нумерация `Calendar.firstWeekday`,
+    /// где 1 — воскресенье).
+    public enum Calendar {
+        public static let manualFirstWeekday = 2
+    }
+
+    /// Плеер в раскрытой панели: что показывать по умолчанию.
+    public enum Player {
+        public static let showsArtwork = true
+        public static let showsPositionBar = true
+    }
+
+    /// Поведение панели по умолчанию: раскрываться по наведению, а не только
+    /// по клику. Наведение — основной жест, клик остаётся как страховка.
+    public enum Behavior {
+        public static let opensOnHover = true
+    }
+
+    /// Комбинация, раскрывающая панель. Значения — карбоновые: именно их
+    /// принимает `RegisterEventHotKey`, и разрешения на управление
+    /// компьютером он, в отличие от глобального монитора событий, не просит.
+    public enum Hotkey {
+        /// ⌃⌥V. Буква та же, за которой человек и так тянется за буфером,
+        /// но модификаторы свободные. ⌘⇧V, с которого начинали, брать нельзя:
+        /// это системная «вставка без форматирования» почти во всех редакторах
+        /// и браузерах, а глобальная регистрация забирает сочетание себе —
+        /// то есть приложение ломало бы то, чем человек пользуется ежедневно.
+        public static let defaultKeyCode = UInt32(kVK_ANSI_V)
+        public static let defaultModifiers = UInt32(controlKey | optionKey)
+        /// То же самое числами со знаком — в таком виде это лежит в настройках
+        /// и уходит в Carbon. Держим рядом, чтобы сочетание по умолчанию
+        /// оставалось в одном месте: два независимых определения уже разошлись
+        /// один раз при слиянии.
+        public static let keyCode = Int(defaultKeyCode)
+        public static let modifiers = Int(defaultModifiers)
+        /// Хоть один из этих флагов обязателен: комбинация без ⌘/⌃/⌥ отобрала
+        /// бы у человека обычную букву во всех приложениях сразу.
+        public static let requiredModifiers = Int(cmdKey | controlKey | optionKey)
+        /// Диапазон кодов клавиш виртуальной клавиатуры macOS.
+        public static let keyCodeRange = 0...127
+        /// Подпись владельца регистрации в Carbon: четыре байта '4ELK'.
+        /// Carbon требует именно четырёхбуквенный код, а не строку.
+        public static let signature = OSType(0x34454C4B)
+    }
+
+    /// Окно настроек: размеры, которые нельзя выводить из содержимого.
+    public enum SettingsWindow {
+        public static let size = CGSize(width: 560, height: 660)
+        /// Минимум, ниже которого подписи слева начинают наезжать на поля.
+        public static let minSize = CGSize(width: 460, height: 420)
+        public static let numberFieldWidth: CGFloat = 64
+        /// Зазор между подписью строки и пояснением под ней.
+        public static let hintSpacing: CGFloat = 2
+        public static let coordinateFieldWidth: CGFloat = 88
+        public static let rowSpacing: CGFloat = 6
+        /// Высота списка приложений и списка городов: примерно пять строк —
+        /// видно, что это список, и он не съедает окно целиком.
+        public static let listHeight: CGFloat = 120
+        /// Зазор между строками внутри такого списка.
+        public static let listRowSpacing: CGFloat = 4
+        /// Шаг стрелок у квот истории: по одному щёлкать двести раз незачем.
+        public static let quotaStep = 10
+        /// Шаг стрелок у времени жизни карточки, в секундах.
+        public static let durationStep: TimeInterval = 0.5
+        /// Шаг стрелок у координат — примерно десять километров.
+        public static let coordinateStep = 0.1
+    }
+
+    /// Границы, в которые загоняются настройки, отредактированные человеком.
+    /// Человек может ввести что угодно, а файл настроек — поправить руками.
+    public enum Limits {
+        public static let historyQuota = 1...5000
+        public static let imageMegabytes = 1...500
+        /// Карточка живёт от полусекунды (меньше — не успеть прочитать) до
+        /// тридцати секунд (дольше — это уже не выезжающая карточка, а плашка,
+        /// висящая под челкой постоянно).
+        public static let activityDuration: ClosedRange<TimeInterval> = 0.5...30
+        /// Нижний порог не может быть сотней: выше него обязан лежать верхний.
+        public static let batteryLow = 1...99
+        public static let batteryHigh = 1...100
+        public static let hysteresis = 1...20
+        public static let latitude = -90.0...90.0
+        public static let longitude = -180.0...180.0
+        public static let weatherRefreshMinutes = 1...240
+        public static let weatherStaleMinutes = 1...1440
+        /// Нумерация `Calendar.firstWeekday`: 1 — воскресенье, 7 — суббота.
+        public static let firstWeekday = 1...7
     }
 
     public enum Notch {
@@ -120,18 +221,6 @@ public enum Config {
     }
 
     /// Глобальное сочетание клавиш, раскрывающее и складывающее панель.
-    public enum Hotkey {
-        /// ⌃⌥V. Буква та же, за которой человек и так тянется за буфером,
-        /// но модификаторы свободные. ⌘⇧V, с которого начинали, брать нельзя:
-        /// это системная «вставка без форматирования» почти во всех редакторах
-        /// и браузерах, а глобальная регистрация забирает сочетание себе —
-        /// то есть приложение ломало бы то, чем человек пользуется ежедневно.
-        public static let defaultKeyCode = UInt32(kVK_ANSI_V)
-        public static let defaultModifiers = UInt32(controlKey | optionKey)
-        /// Подпись владельца регистрации в Carbon: четыре байта '4ELK'.
-        /// Carbon требует именно четырёхбуквенный код, а не строку.
-        public static let signature = OSType(0x34454C4B)
-    }
 
     public enum Media {
         /// Как часто обновляется полоса позиции в интерфейсе.

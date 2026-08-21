@@ -1,5 +1,26 @@
 import Foundation
 
+/// Сколько элементов каждого вида держит история. Значение, а не константы:
+/// квоты правит человек в настройках, и стор обязан считаться с ними, а не с
+/// зашитыми в код числами.
+public struct HistoryQuotas: Equatable, Sendable {
+    public let text: Int
+    public let image: Int
+    public let files: Int
+
+    public init(text: Int, image: Int, files: Int) {
+        self.text = text
+        self.image = image
+        self.files = files
+    }
+
+    /// Значения из `Config` — он остаётся источником истины, настройки его
+    /// только перекрывают.
+    public static let `default` = HistoryQuotas(text: Config.History.textLimit,
+                                                image: Config.History.imageLimit,
+                                                files: Config.History.fileLimit)
+}
+
 public struct HistoryStore: Equatable {
     public let items: [ClipItem]
 
@@ -17,12 +38,20 @@ public struct HistoryStore: Equatable {
     /// А нагрузку берём новую (вместе с новым блобом), чтобы старый блоб попал
     /// в `evictedBlobNames` и был удалён с диска. При обратном выборе новый блоб,
     /// уже записанный на диск до дедупа, остался бы висеть навсегда.
-    public func inserting(_ item: ClipItem) -> HistoryStore {
+    public func inserting(_ item: ClipItem,
+                          quotas: HistoryQuotas = .default) -> HistoryStore {
         let existing = items.first { $0.contentHash == item.contentHash }
         let merged = existing.map { item.inheritingIdentity(from: $0) } ?? item
         var next = items.filter { $0.contentHash != item.contentHash }
         next.insert(merged, at: 0)
-        return HistoryStore(items: Self.applyQuotas(to: next))
+        return HistoryStore(items: Self.applyQuotas(to: next, quotas: quotas))
+    }
+
+    /// Пересчёт квот без вставки: нужен, когда человек уменьшил квоту в
+    /// настройках. Ждать следующего копирования нельзя — тогда «сколько
+    /// хранить» вступало бы в силу неизвестно когда.
+    public func applyingQuotas(_ quotas: HistoryQuotas) -> HistoryStore {
+        HistoryStore(items: Self.applyQuotas(to: items, quotas: quotas))
     }
 
     public func pinning(_ id: UUID) -> HistoryStore { setPinned(id, true) }
@@ -44,14 +73,15 @@ public struct HistoryStore: Equatable {
 
     /// Квоты считаются раздельно по типу: картинки тяжелее текста, и общий лимит
     /// приводил бы к тому, что десяток скриншотов вытеснял бы всю текстовую историю.
-    private static func applyQuotas(to items: [ClipItem]) -> [ClipItem] {
+    private static func applyQuotas(to items: [ClipItem],
+                                    quotas: HistoryQuotas) -> [ClipItem] {
         var counters: [QuotaBucket: Int] = [:]
         var drop = Set<UUID>()
         for item in items where !item.isPinned {
             let bucket = item.quotaBucket
             let seen = (counters[bucket] ?? 0) + 1
             counters[bucket] = seen
-            if seen > bucket.limit { drop.insert(item.id) }
+            if seen > bucket.limit(quotas) { drop.insert(item.id) }
         }
         return items.filter { !drop.contains($0.id) }
     }
@@ -70,11 +100,11 @@ private extension ClipItem {
 enum QuotaBucket {
     case text, image, files
 
-    var limit: Int {
+    func limit(_ quotas: HistoryQuotas) -> Int {
         switch self {
-        case .text: return Config.History.textLimit
-        case .image: return Config.History.imageLimit
-        case .files: return Config.History.fileLimit
+        case .text: return quotas.text
+        case .image: return quotas.image
+        case .files: return quotas.files
         }
     }
 }

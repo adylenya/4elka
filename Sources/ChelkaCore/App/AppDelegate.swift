@@ -17,14 +17,26 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     // Единая точка отправки карточек на всё приложение: буфер (ниже), плеер
     // (Task 15) и батареи (Task 18) пишут сюда же, а не каждый в свою очередь —
     // иначе приоритет «заряд важнее буфера, буфер важнее трека» не работает.
-    private lazy var activityCenter = ActivityCenter(panelState: { [weak self] in
-        self?.machine.state ?? .hidden
-    })
+    private lazy var activityCenter = ActivityCenter(
+        panelState: { [weak self] in self?.machine.state ?? .hidden },
+        settings: { [weak self] in self?.settingsController.settings ?? .defaults })
     private var blobs: BlobStore?
     private var shelf: ShelfCoordinator?
     private var clipboardCoordinator: ClipboardCoordinator?
     private var pasteboardWatcher: PasteboardWatcher?
     private var activityTimer: Timer?
+
+    /// Единственный владелец настроек на всё приложение. Подсистемы читают
+    /// значения отсюда замыканиями, а не копируют их себе при создании: иначе
+    /// правка в открытом окне не доходила бы до них до перезапуска.
+    private lazy var settingsController: SettingsController = {
+        let controller = SettingsController(store: SettingsStore(fileURL: AppPaths.settings))
+        controller.onChange = { [weak self] settings in self?.settingsChanged(settings) }
+        return controller
+    }()
+
+    private lazy var settingsWindow = SettingsWindowController(
+        controller: settingsController, actions: settingsActions())
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         guard let screen = NSScreen.main else { return }
@@ -38,7 +50,10 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         self.panel = panel
 
         trigger = TriggerZone(geometry: geometry,
-                              onHover: { [weak self] inside in self?.apply { $0.hovering(inside) } },
+                              // Наведение идёт через `hovered`, а не прямо в автомат:
+                              // раскрытие по наведению можно выключить в настройках,
+                              // но уход мыши обрабатывается всегда, иначе панель залипает.
+                              onHover: { [weak self] inside in self?.hovered(inside) },
                               onClick: { [weak self] in self?.apply { $0.clicked() } },
                               onDropFiles: { [weak self] urls in self?.acceptDroppedFiles(urls) })
 
@@ -140,7 +155,14 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         try? FileManager.default.createDirectory(at: AppPaths.blobs, withIntermediateDirectories: true)
 
         let index = HistoryIndex(fileURL: AppPaths.index, blobs: blobs)
-        let capture = ClipboardCapture(rules: IgnoreRules(ownBundleID: Config.ownBundleID), blobs: blobs)
+        let capture = ClipboardCapture(rules: { [weak self] in
+                                           self?.settingsController.settings.ignoreRules
+                                               ?? Settings.defaults.ignoreRules
+                                       },
+                                       blobs: blobs,
+                                       quotas: { [weak self] in
+                                           self?.settingsController.settings.historyQuotas ?? .default
+                                       })
         let coordinator = ClipboardCoordinator(capture: capture, index: index, blobs: blobs,
                                                activity: activityCenter)
         clipboardCoordinator = coordinator
@@ -265,29 +287,65 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         case .showPanel:
             apply { _ in PanelStateMachine(state: .expanded) }
         case .openSettings:
-            // Заглушка: настоящее окно настроек — Task 26.
-            let alert = NSAlert()
-            alert.messageText = "Настройки"
-            alert.informativeText = "Здесь будет окно настроек."
-            alert.runModal()
+            settingsWindow.show()
         case .toggleLaunchAtLogin:
-            let service = SMAppService.mainApp
-            do {
-                if service.status == .enabled {
-                    try service.unregister()
-                } else {
-                    try service.register()
-                }
-            } catch {
-                // Из дерева сборки регистрация не сработает, потому что
-                // приложение не лежит в /Applications — это нормально.
-                // Ошибку пишем в лог, а не глотаем и не выдаём за успех.
-                NSLog("4elka: не удалось изменить автозапуск: %@", String(describing: error))
-            }
-            refreshStatusItem()
+            toggleLaunchAtLogin()
         case .quit:
             NSApp.terminate(nil)
         }
+    }
+
+    /// Наведение на челку раскрывает панель только если это разрешено
+    /// настройкой. Выключено — панель открывается кликом или комбинацией
+    /// клавиш, а мышь, проходящая мимо, ничего не дёргает.
+    ///
+    /// Уход мыши обрабатывается всегда, при любой настройке: иначе панель,
+    /// уже показанная по наведению, осталась бы висеть навсегда, если тумблер
+    /// выключить в этот самый момент.
+    private func hovered(_ inside: Bool) {
+        guard settingsController.settings.opensOnHover || !inside else { return }
+        apply { $0.hovering(inside) }
+    }
+
+    /// Что нужно применить сразу, а не при следующем событии. Уменьшенная
+    /// квота истории — именно такой случай: ждать очередного копирования
+    /// означало бы «сколько хранить» вступает в силу неизвестно когда.
+    private func settingsChanged(_ settings: Settings) {
+        clipboardCoordinator?.applyQuotas(settings.historyQuotas)
+    }
+
+    /// Действия для окна настроек: сама вьюха ни истории, ни системной службы
+    /// не знает и знать не должна.
+    private func settingsActions() -> SettingsActions {
+        SettingsActions(
+            clearHistory: { [weak self] in self?.clipboardCoordinator?.clearHistory() },
+            isLaunchAtLoginEnabled: { SMAppService.mainApp.status == .enabled },
+            toggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
+            revealDataFolder: {
+                // Каталог мог ещё не появиться: до первого копирования писать
+                // в него нечего, а Finder на несуществующем пути ничего не
+                // покажет и промолчит.
+                try? FileManager.default.createDirectory(at: AppPaths.support,
+                                                        withIntermediateDirectories: true)
+                NSWorkspace.shared.activateFileViewerSelecting([AppPaths.support])
+            })
+    }
+
+    private func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+            } else {
+                try service.register()
+            }
+        } catch {
+            // Из дерева сборки регистрация не сработает, потому что
+            // приложение не лежит в /Applications — это нормально.
+            // Ошибку пишем в лог, а не глотаем и не выдаём за успех.
+            NSLog("4elka: не удалось изменить автозапуск: %@", String(describing: error))
+        }
+        refreshStatusItem()
     }
 }
 
