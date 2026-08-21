@@ -11,6 +11,8 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     // Аварийный выход: единственный способ управлять и выключить приложение,
     // раз у него нет иконки в доке.
     private var statusItem: StatusItemController?
+    /// Глобальное сочетание клавиш. Создаётся при старте, снимается при выходе.
+    private var panelHotkey: GlobalHotkey?
 
     // Единая точка отправки карточек на всё приложение: буфер (ниже), плеер
     // (Task 15) и батареи (Task 18) пишут сюда же, а не каждый в свою очередь —
@@ -41,6 +43,20 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         refreshStatusItem()
 
         setUpClipboard()
+
+        // Хоткей делает ровно то же, что клик по челке и пункт «Показать
+        // панель»: раскрывает панель, повторное нажатие складывает её.
+        panelHotkey = GlobalHotkey.installed { [weak self] in self?.apply { $0.clicked() } }
+    }
+
+    /// Долгоживущие ресурсы гасим сами: регистрация хоткея живёт в системе, а
+    /// таймер и наблюдатель за буфером продолжали бы тикать во время выхода.
+    public func applicationWillTerminate(_ notification: Notification) {
+        panelHotkey?.unregister()
+        panelHotkey = nil
+        activityTimer?.invalidate()
+        activityTimer = nil
+        pasteboardWatcher?.stop()
     }
 
     /// Стекло с семантическим текстом внутри. Своих цветов не заводим — тема
