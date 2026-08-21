@@ -31,6 +31,40 @@ private func image(_ name: String) -> ClipItem {
     #expect(s.items.first?.kind == .text("a"))
 }
 
+@Test func duplicateKeepsPinSoUserIntentIsNotLost() {
+    // Закрепил, потом скопировал то же самое ещё раз — закрепление должно выжить,
+    // иначе элемент тихо становится вытесняемым.
+    let pinned = text("важное", pinned: true)
+    let s = HistoryStore(items: [pinned]).inserting(text("важное"))
+    #expect(s.items.count == 1)
+    #expect(s.items.first?.isPinned == true)
+}
+
+@Test func duplicateKeepsOriginalIdentity() {
+    let first = text("a")
+    let s = HistoryStore(items: [first]).inserting(text("a"))
+    #expect(s.items.first?.id == first.id)
+}
+
+@Test func duplicateImageReportsOldBlobSoItGetsDeleted() {
+    // Новый блоб уже лежит на диске к моменту дедупа, поэтому оставляем новый,
+    // а старый обязан попасть в список на удаление — иначе он повиснет навсегда.
+    let before = HistoryStore(items: [image("старый.png")])
+    let sameContent = ClipItem(
+        id: UUID(),
+        kind: .image(.init(blobName: "новый.png", byteCount: 10, pixelSize: .init(width: 2, height: 2))),
+        sourceAppBundleID: nil, createdAt: Date(),
+        contentHash: Hashing.sha256(Data("старый.png".utf8)), isPinned: false)
+    let after = before.inserting(sameContent)
+    #expect(after.items.first?.blobName == "новый.png")
+    #expect(after.evictedBlobNames(comparedTo: before) == ["старый.png"])
+}
+
+@Test func unpinningClearsTheFlag() {
+    let item = text("a", pinned: true)
+    #expect(HistoryStore(items: [item]).unpinning(item.id).items.first?.isPinned == false)
+}
+
 @Test func textQuotaEvictsOldest() {
     var s = HistoryStore()
     for i in 0..<(Config.History.textLimit + 5) { s = s.inserting(text("t\(i)")) }

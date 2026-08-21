@@ -43,28 +43,15 @@ public struct ClipItem: Identifiable, Equatable, Codable {
         return nil
     }
 
+    /// Забирает у предыдущей записи то, что принадлежит пользователю, а не буферу:
+    /// её идентификатор и признак закрепления. Всё остальное остаётся новым.
+    func inheritingIdentity(from previous: ClipItem) -> ClipItem {
+        ClipItem(id: previous.id, kind: kind, sourceAppBundleID: sourceAppBundleID,
+                 createdAt: createdAt, contentHash: contentHash, isPinned: previous.isPinned)
+    }
+
     func withPinned(_ pinned: Bool) -> ClipItem {
         ClipItem(id: id, kind: kind, sourceAppBundleID: sourceAppBundleID,
                  createdAt: createdAt, contentHash: contentHash, isPinned: pinned)
-    }
-
-    var quotaBucket: QuotaBucket {
-        switch kind {
-        case .text: return .text
-        case .image: return .image
-        case .files: return .files
-        }
-    }
-}
-
-enum QuotaBucket: CaseIterable {
-    case text, image, files
-
-    var limit: Int {
-        switch self {
-        case .text: return Config.History.textLimit
-        case .image: return Config.History.imageLimit
-        case .files: return Config.History.fileLimit
-        }
     }
 }
