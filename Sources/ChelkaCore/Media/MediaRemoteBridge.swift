@@ -1,31 +1,20 @@
 import Foundation
 
-public struct AdapterPaths {
-    public let script: URL
-    public let framework: URL
-
-    public init(script: URL, framework: URL) {
-        self.script = script
-        self.framework = framework
-    }
-
-    public static func bundled(in bundle: Bundle) -> AdapterPaths? {
-        guard let resources = bundle.resourceURL else { return nil }
-        let script = resources.appendingPathComponent("mediaremote-adapter.pl")
-        let framework = resources.appendingPathComponent("MediaRemoteAdapter.framework")
-        guard FileManager.default.fileExists(atPath: script.path) else { return nil }
-        return AdapterPaths(script: script, framework: framework)
-    }
-
-    public static func developmentTree(projectRoot: URL) -> AdapterPaths {
-        AdapterPaths(
-            script: projectRoot.appendingPathComponent("vendor/mediaremote-adapter/bin/mediaremote-adapter.pl"),
-            framework: projectRoot.appendingPathComponent("vendor/build/MediaRemoteAdapter.framework"))
-    }
+/// Чем откладывается повторная попытка запуска.
+public enum RestartScheduler: Sendable {
+    /// Настоящая пауза, растущая по политике перезапуска.
+    case realTime
+    /// Без паузы. Только для тестов: иначе проверка «сдаюсь после исчерпания
+    /// попыток» ждала бы настоящие 1 + 2 + 4 + 8 + 16 секунд.
+    case immediate
 }
 
-/// Один долгоживущий процесс на чтение потока плюс короткие вызовы на команды.
-/// Обход энтайтлмента macOS 15.4+: perl уже энтайтлен, поэтому фреймворк грузит он.
+/// Супервизор потока плеера: поднимает долгоживущий процесс адаптера, читает из
+/// него состояние и перезапускает по политике, когда он умирает.
+///
+/// Про `Process` этот класс не знает ничего — запуск отдан `AdapterLauncher`.
+/// Так политику перезапуска, тождество процесса и разбор потока можно проверить
+/// тестом, не поднимая настоящий адаптер.
 ///
 /// Соответствие `MediaSource` объявлено расширением ниже, а не здесь: в
 /// основном объявлении класса оно затянуло бы на главный актор ВСЁ содержимое,
@@ -37,21 +26,35 @@ public final class MediaRemoteBridge: @unchecked Sendable {
     private var onState: (@MainActor (NowPlaying) -> Void)?
     private var onUnavailable: (@MainActor () -> Void)?
 
-    private let paths: AdapterPaths
+    private let launcher: AdapterLauncher
+    private let scheduler: RestartScheduler
+    private let log: @Sendable (String) -> Void
+
     /// Всё изменяемое состояние живёт на одной последовательной очереди.
     /// Обработчик завершения процесса Foundation вызывает на произвольной очереди,
     /// поэтому «честное слово» о потокобезопасности здесь не работает: без этой
     /// очереди чтение флага остановки было бы настоящей гонкой.
     private let supervision = DispatchQueue(label: "chelka.media.supervision")
-    private var process: Process?
-    private var pipe: Pipe?
+    private var process: AdapterProcess?
+    private var currentID: AdapterProcessID?
+    private var nextID: UInt64 = 0
     private var startedAt: Date?
     private var state = NowPlaying.empty
     private var buffer = LineBuffer()
     private var policy = RestartPolicy.initial
     private var stopped = false
 
-    public init(paths: AdapterPaths) { self.paths = paths }
+    public convenience init(paths: AdapterPaths) {
+        self.init(launcher: PerlAdapterLauncher(paths: paths))
+    }
+
+    public init(launcher: AdapterLauncher,
+                scheduler: RestartScheduler = .realTime,
+                log: @escaping @Sendable (String) -> Void = { NSLog("4elka: %@", $0) }) {
+        self.launcher = launcher
+        self.scheduler = scheduler
+        self.log = log
+    }
 
     public func start(onState: @escaping @MainActor (NowPlaying) -> Void,
                       onUnavailable: @escaping @MainActor () -> Void) {
@@ -71,27 +74,29 @@ public final class MediaRemoteBridge: @unchecked Sendable {
         }
     }
 
-    /// Снимает обработчик чтения и гасит процесс. Идемпотентно.
-    private func teardownLocked() {
-        pipe?.fileHandleForReading.readabilityHandler = nil
-        pipe = nil
-        if let running = process, running.isRunning { running.terminate() }
-        process = nil
-        startedAt = nil
+    public func send(_ command: MediaCommand) {
+        supervision.async { [self] in
+            do {
+                try launcher.send(command)
+            } catch {
+                log("команда плееру \(command.rawValue) не ушла: \(Self.describe(error))")
+            }
+        }
     }
 
-    public func send(_ command: MediaCommand) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        p.arguments = [paths.script.path, paths.framework.path, "send", String(command.rawValue)]
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        do {
-            try p.run()
-        } catch {
-            NSLog("4elka: команда плееру %d не ушла: %@",
-                  command.rawValue, String(describing: error))
-        }
+    /// Ждёт, пока очередь супервизора доработает уже поставленные задачи.
+    /// Нужна тесту: он синхронный, а мост живёт на своей очереди.
+    func waitForPendingWork() {
+        supervision.sync {}
+    }
+
+    /// Гасит процесс и снимает обработчик чтения. Идемпотентно.
+    /// Вызывается только на очереди супервизора.
+    private func teardownLocked() {
+        process?.stop()
+        process = nil
+        currentID = nil
+        startedAt = nil
     }
 
     /// Вызывается только на очереди супервизора.
@@ -101,59 +106,33 @@ public final class MediaRemoteBridge: @unchecked Sendable {
         // обработчиком чтения, и оба писали бы в один буфер.
         guard process == nil, !stopped else { return }
 
-        // Отсутствующий адаптер даёт коварный случай: сам perl на месте, запуск
-        // «удаётся», а процесс умирает мгновенно. Без этой проверки приложение
-        // молча дёргало бы его вечно, ни разу не сказав, что плеера нет.
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: paths.script.path),
-              fm.fileExists(atPath: paths.framework.path) else {
-            NSLog("4elka: адаптер плеера не найден по пути %@", paths.script.path)
-            reportUnavailable()
-            return
-        }
-
-        // Перед своим запуском убираем брошенные прошлыми запусками процессы:
-        // адаптер переживает смерть хозяина и держит подписку на поток, пока
-        // не попробует записать в закрытую трубу — то есть неограниченно долго.
-        let orphans = AdapterOrphans.sweep(scriptPath: paths.script.path,
-                                           processList: AdapterOrphans.systemProcessList,
-                                           terminate: AdapterOrphans.terminatePolitely)
-        if !orphans.isEmpty {
-            NSLog("4elka: погашено брошенных процессов адаптера: %d", orphans.count)
-        }
-
-        let p = Process()
-        let outputPipe = Pipe()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        p.arguments = [paths.script.path, paths.framework.path, "stream"]
-        p.standardOutput = outputPipe
-        p.standardError = FileHandle.nullDevice
-
-        outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty, let self else { return }
-            self.supervision.async { self.consumeLocked(chunk) }
-        }
-
-        p.terminationHandler = { [weak self] _ in
-            guard let self else { return }
-            self.supervision.async { self.handleExitLocked() }
-        }
-
+        let id = AdapterProcessID(raw: nextID)
+        nextID += 1
         do {
-            try p.run()
-            process = p
-            pipe = outputPipe
+            process = try launcher.launchStream(id: id, handlers: handlers(for: id))
+            currentID = id
             startedAt = Date()
         } catch {
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            NSLog("4elka: не удалось запустить поток плеера: %@", String(describing: error))
+            log("поток плеера не запустился: \(Self.describe(error))")
             reportUnavailable()
         }
     }
 
+    private func handlers(for id: AdapterProcessID) -> AdapterStreamHandlers {
+        AdapterStreamHandlers(
+            output: { [weak self] chunk in
+                guard let self else { return }
+                supervision.async { self.consumeLocked(chunk, from: id) }
+            },
+            errorOutput: { _ in },
+            exit: { [weak self] finished in
+                guard let self else { return }
+                supervision.async { self.handleExitLocked(finished) }
+            })
+    }
+
     /// Вызывается только на очереди супервизора.
-    private func handleExitLocked() {
+    private func handleExitLocked(_ finished: AdapterProcessID) {
         let lifetime = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         teardownLocked()
         // Проверка стоит ЗДЕСЬ, а не только перед постановкой задержки: раньше
@@ -163,12 +142,25 @@ public final class MediaRemoteBridge: @unchecked Sendable {
 
         policy = policy.afterExit(livedFor: lifetime)
         guard !policy.shouldGiveUp else {
-            NSLog("4elka: поток плеера падает сразу при запуске, прекращаю попытки")
+            log("поток плеера падает сразу при запуске, прекращаю попытки")
             reportUnavailable()
             return
         }
-        supervision.asyncAfter(deadline: .now() + policy.delay) { [self] in
-            launchLocked()
+        scheduleLaunchLocked(after: policy.delay)
+    }
+
+    /// Вызывается только на очереди супервизора.
+    ///
+    /// Захват слабый намеренно: сильный держал бы мост живым всю паузу и мог бы
+    /// поднять процесс уже никому не нужному моста-сироте.
+    private func scheduleLaunchLocked(after delay: TimeInterval) {
+        switch scheduler {
+        case .realTime:
+            supervision.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.launchLocked()
+            }
+        case .immediate:
+            supervision.async { [weak self] in self?.launchLocked() }
         }
     }
 
@@ -181,7 +173,7 @@ public final class MediaRemoteBridge: @unchecked Sendable {
     }
 
     /// Вызывается только на очереди супервизора.
-    private func consumeLocked(_ chunk: Data) {
+    private func consumeLocked(_ chunk: Data, from id: AdapterProcessID) {
         let lines = buffer.appending(chunk)
         guard !lines.isEmpty else { return }
         for line in lines {
@@ -192,6 +184,10 @@ public final class MediaRemoteBridge: @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.onState?(snapshot) }
         }
+    }
+
+    private static func describe(_ error: Error) -> String {
+        (error as? AdapterLaunchError)?.message ?? String(describing: error)
     }
 }
 

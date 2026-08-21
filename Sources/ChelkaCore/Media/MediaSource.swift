@@ -1,6 +1,8 @@
 import Foundation
 
-public enum MediaCommand: Int {
+/// `Sendable` объявлено явно: у публичного типа это не выводится само, а
+/// команда ездит между очередями (интерфейс → супервизор → процесс).
+public enum MediaCommand: Int, Sendable {
     case play = 0, pause = 1, toggle = 2, next = 4, previous = 5
 }
 
