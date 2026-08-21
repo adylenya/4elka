@@ -2,9 +2,19 @@ import AppKit
 import Foundation
 
 public struct CaptureResult: Equatable {
+    /// Почему элемент не попал в историю. «Отказались по правилу» и «не смогли
+    /// записать на диск» — разные вещи, и раньше они были неотличимы: оба давали
+    /// пустой результат, и понять, наше это решение или сбой, было нельзя.
+    public enum Skip: Equatable {
+        case ignored(IgnoreDecision.Reason)
+        case nothingUsable
+        case storageFailed
+    }
+
     public let store: HistoryStore
     public let inserted: ClipItem?
     public let evictedBlobNames: [String]
+    public let skip: Skip?
 }
 
 public struct ClipboardCapture {
@@ -22,8 +32,13 @@ public struct ClipboardCapture {
         let decision = rules.decide(types: snapshot.types,
                                     sourceBundleID: snapshot.sourceBundleID,
                                     byteCount: snapshot.byteCount)
-        guard decision.shouldStore, let kind = makeKind(snapshot) else {
-            return CaptureResult(store: store, inserted: nil, evictedBlobNames: [])
+        if let reason = decision.reason {
+            return CaptureResult(store: store, inserted: nil, evictedBlobNames: [],
+                                 skip: .ignored(reason))
+        }
+        guard let kind = makeKind(snapshot) else {
+            return CaptureResult(store: store, inserted: nil, evictedBlobNames: [],
+                                 skip: lastMakeKindFailedOnStorage ? .storageFailed : .nothingUsable)
         }
 
         let item = ClipItem(id: UUID(), kind: kind,
@@ -34,12 +49,30 @@ public struct ClipboardCapture {
         let next = store.inserting(item)
         return CaptureResult(store: next,
                              inserted: item,
-                             evictedBlobNames: next.evictedBlobNames(comparedTo: store))
+                             evictedBlobNames: next.evictedBlobNames(comparedTo: store),
+                             skip: nil)
     }
 
+    /// Отличить «нечего сохранять» от «диск отказал». Захват — структура, поэтому
+    /// признак держим в классе-обёртке, а не мутируем себя.
+    private final class StorageFailureFlag { var failed = false }
+    private let storageFailure = StorageFailureFlag()
+    private var lastMakeKindFailedOnStorage: Bool { storageFailure.failed }
+
     private func makeKind(_ s: PasteboardSnapshot) -> ClipItem.Kind? {
+        storageFailure.failed = false
         if let data = s.imageData, let ext = s.imageExtension {
-            guard let name = try? blobs.write(data, extension: ext) else { return nil }
+            let name: String
+            do {
+                name = try blobs.write(data, extension: ext)
+            } catch {
+                // Молчать нельзя: снаружи это выглядело бы точно так же, как
+                // «мы сами решили не сохранять», и сбой диска остался бы незаметным.
+                NSLog("4elka: не удалось записать картинку из буфера: %@",
+                      String(describing: error))
+                storageFailure.failed = true
+                return nil
+            }
             let size = NSImage(data: data)?.size ?? .zero
             return .image(.init(blobName: name, byteCount: data.count, pixelSize: size))
         }
@@ -61,38 +94,63 @@ public struct ClipboardCapture {
 
 /// Опрос вместо подписки: уведомлений об изменении буфера в macOS нет.
 ///
-/// `@unchecked Sendable`: `lastChangeCount` читает и пишет только обработчик
-/// таймера, который сам всегда выполняется на серийной `queue`, — гонки внутри
-/// класса нет, но компилятор не может доказать это статически через границу
-/// актора при переносе `self` в `DispatchQueue.main.async`.
-public final class PasteboardWatcher: @unchecked Sendable {
+/// Класс целиком на главном акторе, и это осознанно. Предыдущая версия жила на
+/// своей очереди с ручным обещанием потокобезопасности — и обещание оказалось
+/// правдой лишь для одного поля из трёх: таймер и публичное замыкание писались
+/// с произвольного потока. Проверка `changeCount` стоит копейки, а данные читаются
+/// только когда он изменился, поэтому главный актор здесь ничего не тормозит
+/// и убирает целый класс ошибок вместо того, чтобы прятать его от компилятора.
+@MainActor
+public final class PasteboardWatcher {
     private let reader: PasteboardReading
-    private var lastChangeCount: Int
-    private var timer: DispatchSourceTimer?
-    private let queue = DispatchQueue(label: "chelka.pasteboard")
+    /// `nil` значит «ещё не опрашивали ни разу». Опрос до первого реального такта
+    /// не выполняется, поэтому нет отдельного «текущего» значения на момент
+    /// создания наблюдателя, которое можно было бы прочитать заранее и от него
+    /// отталкиваться — значение появляется только внутри `pollOnce()`.
+    private var lastChangeCount: Int?
+    private var timer: Timer?
+    /// Номер записи, сделанной нами самими. Определять «своё» по тому, какое
+    /// приложение сейчас впереди, нельзя: вопрос задаётся до 200 мс спустя после
+    /// записи, за это время впереди может оказаться кто угодно, и наша же запись
+    /// прошла бы в историю — тот самый бесконечный цикл. Номер записи не врёт.
+    private var selfWriteChangeCount: Int?
 
     public var onChange: ((PasteboardSnapshot) -> Void)?
 
     public init(reader: PasteboardReading = SystemPasteboard()) {
         self.reader = reader
-        lastChangeCount = reader.snapshot().changeCount
+    }
+
+    /// Сообщить, что запись с этим номером сделали мы. Возвращаемый номер даёт
+    /// `NSPasteboard.clearContents()`.
+    public func ignoreSelfWrite(changeCount: Int) {
+        selfWriteChangeCount = changeCount
     }
 
     public func start() {
-        let t = DispatchSource.makeTimerSource(queue: queue)
-        t.schedule(deadline: .now() + Config.History.pollInterval,
-                   repeating: Config.History.pollInterval)
-        t.setEventHandler { [weak self] in self?.poll() }
-        t.resume()
-        timer = t
+        // Без этой проверки повторный вызов оставлял бы два живых таймера,
+        // опрашивающих один и тот же буфер.
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: Config.History.pollInterval,
+                                     repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pollOnce() }
+        }
     }
 
-    public func stop() { timer?.cancel(); timer = nil }
+    public func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
 
-    private func poll() {
+    /// Один такт опроса. Открыт наружу, чтобы тест мог прогнать его без таймера.
+    public func pollOnce() {
         let snapshot = reader.snapshot()
         guard snapshot.changeCount != lastChangeCount else { return }
         lastChangeCount = snapshot.changeCount
-        DispatchQueue.main.async { [weak self] in self?.onChange?(snapshot) }
+        if snapshot.changeCount == selfWriteChangeCount {
+            selfWriteChangeCount = nil
+            return
+        }
+        onChange?(snapshot)
     }
 }

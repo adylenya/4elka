@@ -60,6 +60,77 @@ private func snap(types: [String], text: String? = nil, image: Data? = nil,
     #expect(r.inserted == nil)
 }
 
+@Test func distinguishesPolicySkipFromStorageFailure() {
+    // Раньше оба случая давали пустой результат и были неотличимы.
+    let capture = ClipboardCapture(rules: rules, blobs: blobs())
+    let ignored = capture.capture(
+        snap(types: ["public.utf8-plain-text", "org.nspasteboard.ConcealedType"], text: "пароль"),
+        into: HistoryStore(), now: now)
+    #expect(ignored.skip == .ignored(.concealed))
+
+    let empty = capture.capture(snap(types: []), into: HistoryStore(), now: now)
+    #expect(empty.skip == .nothingUsable)
+}
+
+@Test @MainActor func watcherIgnoresOurOwnWriteByChangeCountNotByFrontmostApp() {
+    // Определять «своё» по тому, кто сейчас впереди, нельзя: вопрос задаётся
+    // позже записи. Номер записи не врёт.
+    final class Fake: PasteboardReading {
+        var current = PasteboardSnapshot(changeCount: 1, types: [], text: nil, imageData: nil,
+                                         imageExtension: nil, fileURLs: [], sourceBundleID: nil)
+        func snapshot() -> PasteboardSnapshot { current }
+    }
+    let fake = Fake()
+    let watcher = PasteboardWatcher(reader: fake)
+    var seen: [Int] = []
+    watcher.onChange = { seen.append($0.changeCount) }
+
+    watcher.ignoreSelfWrite(changeCount: 2)
+    fake.current = PasteboardSnapshot(changeCount: 2, types: ["public.utf8-plain-text"],
+                                      text: "эхо", imageData: nil, imageExtension: nil,
+                                      fileURLs: [], sourceBundleID: nil)
+    watcher.pollOnce()
+    #expect(seen.isEmpty)
+
+    fake.current = PasteboardSnapshot(changeCount: 3, types: ["public.utf8-plain-text"],
+                                      text: "чужое", imageData: nil, imageExtension: nil,
+                                      fileURLs: [], sourceBundleID: nil)
+    watcher.pollOnce()
+    #expect(seen == [3])
+}
+
+@Test @MainActor func watcherStartIsIdempotent() {
+    final class Fake: PasteboardReading {
+        func snapshot() -> PasteboardSnapshot {
+            PasteboardSnapshot(changeCount: 1, types: [], text: nil, imageData: nil,
+                               imageExtension: nil, fileURLs: [], sourceBundleID: nil)
+        }
+    }
+    let watcher = PasteboardWatcher(reader: Fake())
+    watcher.start()
+    watcher.start()
+    watcher.stop()
+    // Второй stop не должен ничего ломать.
+    watcher.stop()
+}
+
+@Test @MainActor func watcherDoesNotReportUnchangedClipboard() {
+    final class Fake: PasteboardReading {
+        func snapshot() -> PasteboardSnapshot {
+            PasteboardSnapshot(changeCount: 7, types: ["public.utf8-plain-text"], text: "т",
+                               imageData: nil, imageExtension: nil, fileURLs: [],
+                               sourceBundleID: nil)
+        }
+    }
+    let watcher = PasteboardWatcher(reader: Fake())
+    var count = 0
+    watcher.onChange = { _ in count += 1 }
+    watcher.pollOnce()
+    watcher.pollOnce()
+    watcher.pollOnce()
+    #expect(count == 1)
+}
+
 @Test func reportsEvictedBlobsSoFilesCanBeDeleted() {
     let store = blobs()
     let capture = ClipboardCapture(rules: rules, blobs: store)
