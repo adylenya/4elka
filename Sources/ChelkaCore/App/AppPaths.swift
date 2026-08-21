@@ -7,6 +7,7 @@ public enum AppPaths {
     }
     public static var blobs: URL { support.appendingPathComponent("blobs", isDirectory: true) }
     public static var index: URL { support.appendingPathComponent("index.json") }
+    public static var settings: URL { support.appendingPathComponent("settings.json") }
     public static var dragTemp: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("4elka-drag", isDirectory: true)
     }

@@ -18,20 +18,32 @@ public struct CaptureResult: Equatable {
 }
 
 public struct ClipboardCapture {
-    private let rules: IgnoreRules
+    /// Правила и квоты — замыканиями, а не значениями: человек правит их в
+    /// открытом окне настроек, и следующая же запись в буфер обязана считаться
+    /// с новым значением, без перезапуска приложения.
+    private let rules: () -> IgnoreRules
+    private let quotas: () -> HistoryQuotas
     private let blobs: BlobStore
 
+    /// Постоянные правила и квоты по умолчанию — этого хватает тестам и всему,
+    /// что не связано с настройками.
     public init(rules: IgnoreRules, blobs: BlobStore) {
+        self.init(rules: { rules }, blobs: blobs, quotas: { .default })
+    }
+
+    public init(rules: @escaping () -> IgnoreRules, blobs: BlobStore,
+                quotas: @escaping () -> HistoryQuotas) {
         self.rules = rules
+        self.quotas = quotas
         self.blobs = blobs
     }
 
     public func capture(_ snapshot: PasteboardSnapshot,
                         into store: HistoryStore,
                         now: Date) -> CaptureResult {
-        let decision = rules.decide(types: snapshot.types,
-                                    sourceBundleID: snapshot.sourceBundleID,
-                                    byteCount: snapshot.byteCount)
+        let decision = rules().decide(types: snapshot.types,
+                                      sourceBundleID: snapshot.sourceBundleID,
+                                      byteCount: snapshot.byteCount)
         if let reason = decision.reason {
             return CaptureResult(store: store, inserted: nil, evictedBlobNames: [],
                                  skip: .ignored(reason))
@@ -46,7 +58,7 @@ public struct ClipboardCapture {
                             createdAt: now,
                             contentHash: hash(for: snapshot, kind: kind),
                             isPinned: false)
-        let next = store.inserting(item)
+        let next = store.inserting(item, quotas: quotas())
         return CaptureResult(store: next,
                              inserted: item,
                              evictedBlobNames: next.evictedBlobNames(comparedTo: store),

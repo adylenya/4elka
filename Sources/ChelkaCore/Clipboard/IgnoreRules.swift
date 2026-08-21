@@ -24,10 +24,16 @@ public struct IgnoreRules: Sendable {
 
     private let blocked: Set<String>
     private let own: String
+    private let maxBytes: Int
 
-    public init(blockedBundleIDs: Set<String> = IgnoreRules.defaultBlocked, ownBundleID: String) {
+    /// Потолок размера приходит снаружи: его крутит человек в настройках, а
+    /// значение из `Config` остаётся значением по умолчанию.
+    public init(blockedBundleIDs: Set<String> = IgnoreRules.defaultBlocked,
+                ownBundleID: String,
+                maxBytes: Int = Config.History.maxImageBytes) {
         blocked = blockedBundleIDs
         own = ownBundleID
+        self.maxBytes = maxBytes
     }
 
     public func decide(types: [String], sourceBundleID: String?, byteCount: Int) -> IgnoreDecision {
@@ -38,7 +44,7 @@ public struct IgnoreRules: Sendable {
             if id == own { return .init(reason: .ownApp) }
             if blocked.contains(id) { return .init(reason: .blockedApp) }
         }
-        if byteCount > Config.History.maxImageBytes { return .init(reason: .tooLarge) }
+        if byteCount > maxBytes { return .init(reason: .tooLarge) }
         return .init(reason: nil)
     }
 }

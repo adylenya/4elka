@@ -40,6 +40,37 @@ public final class ClipboardCoordinator: ObservableObject {
         scheduleSave()
     }
 
+    /// Пересчёт квот по новым настройкам. Ждать следующего копирования нельзя:
+    /// уменьшенное «сколько хранить» вступало бы в силу неизвестно когда.
+    /// Вытесненные блобы удаляются здесь же, иначе файлы остались бы сиротами.
+    public func applyQuotas(_ quotas: HistoryQuotas) {
+        let before = history
+        let next = history.applyingQuotas(quotas)
+        guard next != before else { return }
+        history = next
+        blobs.delete(next.evictedBlobNames(comparedTo: before))
+        scheduleSave()
+    }
+
+    /// Полная очистка по кнопке из настроек. При первом запуске приложение
+    /// подхватывает то, что уже лежало в буфере, и человек должен уметь стереть
+    /// это, не лазая в терминал.
+    ///
+    /// Закреплённое тоже уходит: человек нажал «Очистить историю» и подтвердил,
+    /// а история с остатками — не пустая история. Файлы сносятся все, включая
+    /// потерявшие свою запись: осиротевших файлов после очистки быть не должно.
+    /// Индекс пишется сразу, а не с задержкой — стёртое не должно вернуться,
+    /// если приложение выключат в следующую секунду.
+    public func clearHistory() {
+        history = HistoryStore()
+        blobs.removeAll()
+        do {
+            try index.save(history)
+        } catch {
+            NSLog("4elka: не удалось сохранить пустой индекс: %@", String(describing: error))
+        }
+    }
+
     public func pin(_ id: UUID) { history = history.pinning(id); scheduleSave() }
     public func unpin(_ id: UUID) { history = history.unpinning(id); scheduleSave() }
 
