@@ -12,8 +12,21 @@ public struct BlobStore {
         return name
     }
 
-    public func url(for blobName: String) -> URL { root.appendingPathComponent(blobName) }
-    public func exists(_ blobName: String) -> Bool { fm.fileExists(atPath: url(for: blobName).path) }
+    /// Имя блоба приходит из индекса на диске, то есть из данных, а не только из кода.
+    /// Битый или подменённый индекс может принести «../../что-то», и системный вызов
+    /// удаления раскрутит эти «..» уже вне нашего каталога — то есть снесёт чужой файл.
+    /// Поэтому от имени берётся только последний компонент пути, всегда.
+    private func safeName(_ blobName: String) -> String {
+        (blobName as NSString).lastPathComponent
+    }
+
+    public func url(for blobName: String) -> URL {
+        root.appendingPathComponent(safeName(blobName))
+    }
+
+    public func exists(_ blobName: String) -> Bool {
+        fm.fileExists(atPath: url(for: blobName).path)
+    }
 
     public func delete(_ blobNames: [String]) {
         for name in blobNames { try? fm.removeItem(at: url(for: name)) }
