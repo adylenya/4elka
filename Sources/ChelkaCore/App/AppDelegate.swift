@@ -21,6 +21,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         self?.machine.state ?? .hidden
     })
     private var blobs: BlobStore?
+    private var shelf: ShelfCoordinator?
     private var clipboardCoordinator: ClipboardCoordinator?
     private var pasteboardWatcher: PasteboardWatcher?
     private var activityTimer: Timer?
@@ -29,6 +30,8 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         guard let screen = NSScreen.main else { return }
         geometry = NotchGeometry.current(screen: screen)
 
+        setUpShelf()
+
         let panel = NotchPanel(geometry: geometry)
         panel.contentView = defaultContentView()
         panel.orderFrontRegardless()
@@ -36,7 +39,8 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
 
         trigger = TriggerZone(geometry: geometry,
                               onHover: { [weak self] inside in self?.apply { $0.hovering(inside) } },
-                              onClick: { [weak self] in self?.apply { $0.clicked() } })
+                              onClick: { [weak self] in self?.apply { $0.clicked() } },
+                              onDropFiles: { [weak self] urls in self?.acceptDroppedFiles(urls) })
 
         let statusItem = StatusItemController { [weak self] action in self?.handle(action) }
         self.statusItem = statusItem
@@ -59,6 +63,29 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         pasteboardWatcher?.stop()
     }
 
+    private func setUpShelf() {
+        let coordinator = ShelfCoordinator(index: ShelfIndex(fileURL: AppPaths.shelf))
+        shelf = coordinator
+        // Чтение полки с проверкой каждого файла на диске — не дело старта
+        // на главной очереди: том может быть сетевым. Панель поднимется
+        // сразу, полка догрузится через мгновение.
+        Task { await coordinator.load() }
+    }
+
+    /// Файлы, брошенные на челку или на раскрытую панель.
+    ///
+    /// Раскрытие панели отложено на следующий проход цикла событий: перестраивать
+    /// вью прямо внутри обработки сброса — напрашиваться на падение, ведь жест
+    /// в этот момент ещё завершается. Заодно панель не забирает клавиатуру
+    /// посреди чужого перетаскивания.
+    private func acceptDroppedFiles(_ urls: [URL]) {
+        guard let shelf, !urls.isEmpty else { return }
+        shelf.add(urls)
+        DispatchQueue.main.async { [weak self] in
+            self?.apply { _ in PanelStateMachine(state: .expanded) }
+        }
+    }
+
     /// Стекло с семантическим текстом внутри. Своих цветов не заводим — тема
     /// системная, и переключение светлая/тёмная должно достаться бесплатно.
     /// Раскладка идёт по `NotchLayout.inPanel`, а не занимает всё окно целиком:
@@ -66,20 +93,33 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     /// зарезервированы под короткие виджеты (время, погода, заряд) — их
     /// подключит отдельная задача, но место под них уже не перекрывает челка.
     private func defaultContentView() -> NSView {
-        NSHostingView(rootView: GlassPanel {
+        hosting(GlassPanel {
             NotchPanelContent(geometry: geometry)
         })
+    }
+
+    /// Любое содержимое панели живёт внутри приёмника файлов, а не рядом с ним:
+    /// AppKit ищет получателя сброса, поднимаясь от вью под курсором к её
+    /// родителям, поэтому «принимать файлы в любом месте панели» умеет только
+    /// родитель. Слой поверх содержимого не годится вовсе — он съел бы нажатия
+    /// у плиток истории и убил бы перетаскивание наружу.
+    private func hosting<Content: View>(_ content: Content) -> NSView {
+        let dropper = FileDropView()
+        dropper.onDrop = { [weak self] urls in self?.acceptDroppedFiles(urls) }
+        dropper.embed(NSHostingView(rootView: content))
+        return dropper
     }
 
     /// Содержимое раскрытой панели — сетка истории. Пока буфер не поднят
     /// (первые мгновения после запуска), показываем то же, что и всегда:
     /// сетка без координатора существовать не может.
     private func expandedContentView() -> NSView {
-        guard let coordinator = clipboardCoordinator, let blobs else {
+        guard let coordinator = clipboardCoordinator, let blobs, let shelf else {
             return defaultContentView()
         }
-        return NSHostingView(rootView: GlassPanel {
-            HistoryPanelContent(coordinator: coordinator, blobs: blobs, geometry: geometry,
+        return hosting(GlassPanel {
+            HistoryPanelContent(coordinator: coordinator, blobs: blobs, shelf: shelf,
+                                geometry: geometry,
                                 onClose: { [weak self] in self?.dismissPanelSoon() })
         })
     }
@@ -148,7 +188,10 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private func renderActivity() {
         guard let panel, let blobs else { return }
         if let event = activityCenter.queue.current {
-            panel.contentView = NSHostingView(rootView: NotchContinuationFigure {
+            // Карточка тоже принимает файлы: она закрывает челку собой, и без
+            // приёмника вокруг неё сброс на челку не сработал бы в те секунды,
+            // пока карточка висит.
+            panel.contentView = hosting(NotchContinuationFigure {
                 ActivityFigureContent(event: event, blobs: blobs, geometry: geometry)
             })
         } else if machine.state == .activity {
@@ -177,6 +220,9 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         // наведение мыши, то есть десятки раз подряд.
         if machine.state == .expanded, previous != .expanded {
             panel.contentView = expandedContentView()
+            // Пока панель была закрыта, файлы с полки могли удалить или
+            // перенести. Проверка уходит с главной очереди: том бывает сетевым.
+            if let shelf { Task { await shelf.pruneMissingFiles() } }
         } else if previous == .expanded, machine.state != .expanded {
             panel.contentView = defaultContentView()
         }
@@ -269,21 +315,28 @@ private struct NotchPanelContent: View {
     }
 }
 
-/// Сетка истории, посаженная в тело панели — под челку. Крылья слева и справа
-/// от челки сетке не отдаются: плитка в полосе высотой с челку не читается,
-/// а само тело панели раскрытой на `expandedSize` вполне достаточно.
+/// Сетка истории и полоса полки под ней, посаженные в тело панели — под челку.
+/// Крылья слева и справа от челки им не отдаются: плитка в полосе высотой
+/// с челку не читается, а само тело панели раскрытой на `expandedSize`
+/// вполне достаточно.
 private struct HistoryPanelContent: View {
     let coordinator: ClipboardCoordinator
     let blobs: BlobStore
+    let shelf: ShelfCoordinator
     let geometry: NotchGeometry
     let onClose: () -> Void
 
     var body: some View {
         GeometryReader { proxy in
             let layout = NotchLayout.inPanel(size: proxy.size, geometry: geometry)
-            HistoryGridView(coordinator: coordinator, blobs: blobs, onClose: onClose)
-                .frame(width: layout.body.width, height: layout.body.height)
-                .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
+            VStack(spacing: 0) {
+                HistoryGridView(coordinator: coordinator, blobs: blobs, onClose: onClose)
+                ShelfView(coordinator: shelf)
+                    .padding(.horizontal, Config.HistoryGrid.padding)
+                    .padding(.bottom, Config.HistoryGrid.padding)
+            }
+            .frame(width: layout.body.width, height: layout.body.height)
+            .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
         }
     }
 }

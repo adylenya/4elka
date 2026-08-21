@@ -50,6 +50,22 @@ public enum Config {
         public static let fileIconSide: CGFloat = 40
     }
 
+    /// Полка файлов: полоса в раскрытой панели и подсветка зоны приёма.
+    public enum Shelf {
+        /// Высота полосы полки: плитка (`HistoryGrid.tileSide`) плюс заголовок
+        /// с кнопками над ней и зазор между ними. Остальное тело панели
+        /// достаётся сетке истории.
+        public static let stripHeight: CGFloat = 128
+        /// Зазор между заголовком полки и плитками.
+        public static let innerSpacing: CGFloat = 6
+        /// Толщина рамки, которой зона приёма подсвечивается под перетаскиванием.
+        public static let dropHighlightLineWidth: CGFloat = 2
+        /// Скругление этой рамки — под стать скруглению плиток.
+        public static let dropHighlightCornerRadius: CGFloat = 10
+        /// Сколько строк имени файла видно на плитке полки.
+        public static let nameLineLimit = 2
+    }
+
     public enum Battery {
         public static let lowThreshold = 20
         public static let highThreshold = 80
