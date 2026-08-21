@@ -55,6 +55,26 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
     #expect(fired.first?.level == .high)
 }
 
+@Test func fullChargeSuppressesTheRedundantHighAlert() {
+    // Устройство, впервые увиденное сразу на сотне при зарядке, не должно выдать
+    // две карточки об одном событии.
+    var alerts = BatteryAlerts()
+    let (_, fired) = alerts.evaluating([dev("Айфон", 100, charging: true)])
+    #expect(fired.count == 1)
+    #expect(fired.first?.level == .full)
+}
+
+@Test func rearmsExactlyAtTheHysteresisBoundary() {
+    var alerts = BatteryAlerts()
+    var fired: [BatteryAlert]
+    (alerts, _) = alerts.evaluating([dev("Наушники", 30)])
+    (alerts, _) = alerts.evaluating([dev("Наушники", 19)])
+    // 20 + 5 = 25 ровно: граница включительная, значит взводится.
+    (alerts, _) = alerts.evaluating([dev("Наушники", 25)])
+    (alerts, fired) = alerts.evaluating([dev("Наушники", 19)])
+    #expect(fired.count == 1)
+}
+
 @Test func fullChargeFiresItsOwnAlert() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
