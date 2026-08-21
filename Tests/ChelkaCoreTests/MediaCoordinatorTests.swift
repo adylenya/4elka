@@ -107,6 +107,27 @@ private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
     #expect(!c.isAvailable)
 }
 
+/// Пустое название и непустой исполнитель давали карточку с пустой первой
+/// строкой — она читается как поломка приложения.
+@Test func activityEventNeverHasEmptyTitle() {
+    let e = try! #require(MediaCoordinator.activityEvent(for: state(title: "", artist: "И",
+                                                                   playing: true)))
+    #expect(e.title == "И")
+    #expect(e.subtitle == nil)
+}
+
+/// Названия нет вовсе — исполнитель встаёт заголовком один раз, а не дважды.
+@Test func activityEventDoesNotRepeatArtistInBothLines() {
+    let e = try! #require(MediaCoordinator.activityEvent(for: state(title: nil, artist: "И",
+                                                                   playing: true)))
+    #expect(e.title == "И")
+    #expect(e.subtitle == nil)
+}
+
+@Test func activityEventIsNothingWhenBothLinesAreBlank() {
+    #expect(MediaCoordinator.activityEvent(for: state(title: "  ", artist: "", playing: true)) == nil)
+}
+
 @Test func activityEventCarriesArtistAsSubtitle() {
     let e = try! #require(MediaCoordinator.activityEvent(for: state(title: "Т", artist: "И", playing: true)))
     #expect(e.title == "Т")

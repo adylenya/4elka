@@ -31,14 +31,41 @@ public struct NowPlaying: Equatable, Sendable {
                                          elapsedAnchor: nil, anchorTimestamp: nil,
                                          isPlaying: false, bundleIdentifier: nil, artworkData: nil)
 
-    public var isEmpty: Bool { title == nil && artist == nil }
+    public var isEmpty: Bool { trackIdentity == nil }
+
+    /// Название и исполнитель для показа: обрезанные по краям, а пустые —
+    /// как отсутствующие. Пустая строка в потоке — это не значение: из челки
+    /// выезжала карточка с пустой первой строкой, и выглядело это поломкой.
+    public var displayTitle: String? { NowPlaying.meaningful(title) }
+    public var displayArtist: String? { NowPlaying.meaningful(artist) }
+
+    /// Две строки для человека. Заголовок — название, а если его нет вовсе,
+    /// заголовком становится исполнитель, и тогда подзаголовка НЕТ: иначе
+    /// исполнитель стоял бы в карточке дважды.
+    public var displayLines: (headline: String, subheadline: String?)? {
+        guard let headline = displayTitle ?? displayArtist else { return nil }
+        return (headline, displayTitle == nil ? nil : displayArtist)
+    }
 
     /// Идентичность трека — название плюс исполнитель. Не contentItemIdentifier:
     /// он меняется при каждом обновлении состояния, что превратило бы карточку
     /// смены трека в мигалку раз в несколько секунд.
+    ///
+    /// Собирается из ОБРЕЗАННЫХ значений и без учёта регистра: иначе пробел по
+    /// краям или смена регистра — это «новый трек», то есть лишняя карточка из
+    /// челки и повторное декодирование той же обложки.
     public var trackIdentity: String? {
+        let title = displayTitle?.lowercased()
+        let artist = displayArtist?.lowercased()
         guard title != nil || artist != nil else { return nil }
         return "\(title ?? "")—\(artist ?? "")"
+    }
+
+    /// Обрезанная строка либо `nil`, если после обрезки ничего не осталось.
+    static func meaningful(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 
     public func position(at now: Date) -> TimeInterval? {
@@ -65,7 +92,9 @@ public struct NowPlaying: Equatable, Sendable {
             NSLog("4elka: поле %@ в потоке плеера пришло неожиданного типа", key)
         }
         func str(_ key: String, _ fallback: String?) -> String? {
-            if let value = p[key] as? String { return value }
+            // Пустая (и пробельная) строка — отсутствие значения, а не значение:
+            // в диффе это честное «поле опустело», а не повод оставить старое.
+            if let value = p[key] as? String { return NowPlaying.meaningful(value) }
             warnIfPresentButWrongType(key)
             return line.isDiff ? fallback : nil
         }

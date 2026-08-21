@@ -94,7 +94,10 @@ public final class MediaCoordinator: ObservableObject {
     /// `@MainActor`: чистая функция от параметра, `self` не трогает, поэтому
     /// изоляция всего класса ей не нужна.
     public nonisolated static func activityEvent(for state: NowPlaying) -> ActivityEvent? {
-        guard let title = state.title ?? state.artist else { return nil }
-        return ActivityEvent(kind: .track, title: title, subtitle: state.artist)
+        // Обе строки берутся из `displayLines`: пустая первая строка читается как
+        // поломка, а исполнитель, стоящий одновременно заголовком и
+        // подзаголовком, — как ошибка отрисовки.
+        guard let lines = state.displayLines else { return nil }
+        return ActivityEvent(kind: .track, title: lines.headline, subtitle: lines.subheadline)
     }
 }

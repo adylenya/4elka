@@ -130,6 +130,63 @@ private func fixtureLines() throws -> [String] {
     #expect(a.trackIdentity == b.trackIdentity)
 }
 
+// MARK: - Пустая строка — это отсутствие значения, а не значение
+
+@Test func emptyTitleIsTreatedAsMissing() {
+    let state = NowPlaying.empty.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"","artist":"И","playing":true}}"#)!)
+    #expect(state.title == nil)
+    #expect(state.displayTitle == nil)
+}
+
+@Test func whitespaceOnlyTitleIsTreatedAsMissing() {
+    let state = NowPlaying.empty.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"   ","artist":"И","playing":true}}"#)!)
+    #expect(state.displayTitle == nil)
+}
+
+@Test func stateWithOnlyEmptyStringsCountsAsNothingPlaying() {
+    let state = NowPlaying.empty.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"","artist":"","playing":true}}"#)!)
+    #expect(state.isEmpty)
+    #expect(state.trackIdentity == nil)
+}
+
+/// Заголовок и подзаголовок карточки. Если названия нет вовсе, исполнитель
+/// встаёт заголовком ОДИН раз: раньше он стоял и заголовком, и подзаголовком.
+@Test func displayLinesDoNotRepeatArtistTwice() {
+    let state = NowPlaying(title: nil, artist: "И", album: nil, duration: nil,
+                           elapsedAnchor: nil, anchorTimestamp: nil, isPlaying: true,
+                           bundleIdentifier: nil, artworkData: nil)
+    let lines = try! #require(state.displayLines)
+    #expect(lines.headline == "И")
+    #expect(lines.subheadline == nil)
+}
+
+@Test func displayLinesNeverStartWithAnEmptyFirstLine() {
+    let state = NowPlaying(title: "", artist: "И", album: nil, duration: nil,
+                           elapsedAnchor: nil, anchorTimestamp: nil, isPlaying: true,
+                           bundleIdentifier: nil, artworkData: nil)
+    let lines = try! #require(state.displayLines)
+    #expect(lines.headline == "И")
+}
+
+@Test func trailingSpacesDoNotMakeANewTrack() {
+    let a = NowPlaying.empty.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"Т ","artist":" И"}}"#)!)
+    let b = NowPlaying.empty.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"Т","artist":"И"}}"#)!)
+    #expect(a.trackIdentity == b.trackIdentity)
+}
+
+@Test func caseOnlyChangeDoesNotMakeANewTrack() {
+    let a = NowPlaying.empty.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"Sunflower","artist":"Post Malone"}}"#)!)
+    let b = NowPlaying.empty.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"SUNFLOWER","artist":"post malone"}}"#)!)
+    #expect(a.trackIdentity == b.trackIdentity)
+}
+
 @Test func parseRejectsGarbage() {
     #expect(NowPlayingLine.parse("не json") == nil)
     #expect(NowPlayingLine.parse("") == nil)

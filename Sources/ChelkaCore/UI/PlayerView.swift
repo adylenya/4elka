@@ -39,11 +39,14 @@ public struct PlayerView: View {
             HStack(spacing: 12) {
                 artworkView
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(coordinator.state.title ?? "")
+                    // Строки берутся из `displayLines`: пустое название не
+                    // должно давать пустую первую строку, а исполнитель без
+                    // названия не должен дублироваться во второй.
+                    Text(coordinator.state.displayLines?.headline ?? "")
                         .font(.headline)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    if let artist = coordinator.state.artist {
+                    if let artist = coordinator.state.displayLines?.subheadline {
                         Text(artist)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
