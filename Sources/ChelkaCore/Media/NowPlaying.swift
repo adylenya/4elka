@@ -57,10 +57,12 @@ public struct NowPlaying: Equatable, Sendable {
         // отсутствие значения. Молчать нельзя: без сигнала будущая смена формата
         // в macOS проявится как «плеер разучился показывать длительность» без
         // единой зацепки в логах.
+        // NSNull — это честное «поле очищено», а не сломанный тип: в потоке диффов
+        // так штатно сбрасывают значение. Ругаться на него значит засорять лог ложной
+        // тревогой ровно там, где мы хотели видеть настоящую.
         func warnIfPresentButWrongType(_ key: String) {
-            if p[key] != nil {
-                NSLog("4elka: поле %@ в потоке плеера пришло неожиданного типа", key)
-            }
+            guard let value = p[key], !(value is NSNull) else { return }
+            NSLog("4elka: поле %@ в потоке плеера пришло неожиданного типа", key)
         }
         func str(_ key: String, _ fallback: String?) -> String? {
             if let value = p[key] as? String { return value }
@@ -82,8 +84,13 @@ public struct NowPlaying: Equatable, Sendable {
         let anchor: (elapsed: TimeInterval?, stamp: Date?)
         if let elapsed = (p["elapsedTime"] as? NSNumber)?.doubleValue {
             let raw = p["timestamp"] as? String
+            if raw == nil { warnIfPresentButWrongType("timestamp") }
             anchor = (elapsed, raw.flatMap { ISO8601DateFormatter().date(from: $0) })
         } else if line.isDiff {
+            // Именно эти два поля меняются чаще всего при смене формата в системе,
+            // поэтому молчать о них нельзя — их разбор идёт отдельной ветвью и общие
+            // помощники его не прикрывают.
+            warnIfPresentButWrongType("elapsedTime")
             anchor = (base.elapsedAnchor, base.anchorTimestamp)
         } else {
             anchor = (nil, nil)

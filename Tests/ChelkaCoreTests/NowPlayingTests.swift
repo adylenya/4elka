@@ -104,6 +104,22 @@ private func fixtureLines() throws -> [String] {
     #expect(state.anchorTimestamp == Date(timeIntervalSince1970: 10))
 }
 
+@Test func diffWithExplicitNullFieldsKeepsPreviousValuesWithoutCrashing() {
+    // JSONSerialization представляет явный JSON null как NSNull — штатный способ
+    // источника «очистить поле» в диффе, а не признак сломанного формата.
+    // Разбор не должен падать и не должен подменять старое значение мусором.
+    var state = NowPlaying.empty
+    state = state.applying(NowPlayingLine.parse(
+        #"{"diff":false,"payload":{"title":"Первый","artist":"А","duration":180.0,"elapsedTime":10.0,"timestamp":"1970-01-01T00:00:10Z","playing":true}}"#)!)
+    state = state.applying(NowPlayingLine.parse(
+        #"{"diff":true,"payload":{"title":null,"duration":null,"elapsedTime":null,"playing":true}}"#)!)
+    #expect(state.title == "Первый")
+    #expect(state.artist == "А")
+    #expect(state.duration == 180.0)
+    #expect(state.elapsedAnchor == 10.0)
+    #expect(state.anchorTimestamp == Date(timeIntervalSince1970: 10))
+}
+
 @Test func trackIdentityIgnoresContentItemIdentifier() {
     // Замер на фикстуре: contentItemIdentifier меняется при каждом обновлении состояния,
     // поэтому идентичность трека — это название плюс исполнитель.
