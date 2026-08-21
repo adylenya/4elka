@@ -30,6 +30,8 @@ public enum Config {
         public static let latitude = 51.1605
         public static let longitude = 71.4704
         public static let refreshInterval: TimeInterval = 15 * 60
+        /// С какого возраста данные считаются устаревшими и показываются с пометкой.
+        public static let staleAfter: TimeInterval = 60 * 60
         public static let plausibleCelsius = -70.0 ... 60.0
     }
 

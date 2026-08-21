@@ -5,16 +5,15 @@ import SwiftUI
 /// семантические цвета (`.primary`, `.secondary`).
 ///
 /// Если снимка нет вовсе (ни сети, ни кэша на диске) — прочерк, а не ноль:
-/// ноль выглядел бы как настоящая температура. Если снимок старше часа,
-/// рядом мелким шрифтом дописывается время наблюдения, чтобы не выдать
-/// вчерашнюю погоду за сегодняшнюю.
+/// ноль выглядел бы как настоящая температура. Если снимок устарел, рядом
+/// мелким шрифтом дописывается возраст данных человеческими словами
+/// (`ageDescription`) — не время наблюдения: «14:32» у трёхдневной погоды
+/// читается как сегодняшняя, а «3 дн назад» — нет.
 ///
 /// Вьюха тонкая и не покрывается тестами — вся логика живёт в
 /// `WeatherSnapshot` и `WeatherProvider`.
 public struct WeatherView: View {
     @ObservedObject private var provider: WeatherProvider
-
-    private static let staleAfter: TimeInterval = 60 * 60
 
     public init(provider: WeatherProvider) {
         self.provider = provider
@@ -27,8 +26,8 @@ public struct WeatherView: View {
                     .foregroundStyle(.primary)
                 Text(snapshot.summary)
                     .foregroundStyle(.primary)
-                if isStale(snapshot) {
-                    Text(Self.observedAtString(snapshot.observedAt))
+                if let age = snapshot.ageDescription(now: Date()) {
+                    Text(age)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -37,16 +36,5 @@ public struct WeatherView: View {
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func isStale(_ snapshot: WeatherSnapshot) -> Bool {
-        Date().timeIntervalSince(snapshot.observedAt) > Self.staleAfter
-    }
-
-    private static func observedAtString(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        formatter.timeZone = TimeZone(identifier: Config.timezone)
-        return formatter.string(from: date)
     }
 }

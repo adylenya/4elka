@@ -12,6 +12,7 @@ public final class WeatherProvider: ObservableObject {
     private let cacheURL: URL
     private let fetch: (URL) async throws -> Data
     private var timer: Timer?
+    private var isRefreshing = false
 
     public init(cacheURL: URL,
                 fetch: @escaping (URL) async throws -> Data = { url in
@@ -35,6 +36,9 @@ public final class WeatherProvider: ObservableObject {
     }
 
     public func start() {
+        // Повторный вызов иначе завёл бы второй таймер: два независимых
+        // обновления на одном интервале, без всякой синхронизации между ними.
+        guard timer == nil else { return }
         Task { await refresh() }
         timer = Timer.scheduledTimer(withTimeInterval: Config.Weather.refreshInterval,
                                      repeats: true) { [weak self] _ in
@@ -47,11 +51,19 @@ public final class WeatherProvider: ObservableObject {
     /// Сети нет — остаёмся на кэше. Показывать ноль или пустоту было бы хуже,
     /// чем показать вчерашние 20 градусов.
     public func refresh() async {
+        // Без этого замка медленный старый ответ мог завершиться позже быстрого
+        // нового и молча перезаписать свежие данные устаревшими.
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
         guard let data = try? await fetch(Self.requestURL),
               let fresh = WeatherSnapshot.decode(data, now: Date()) else { return }
         snapshot = fresh
-        if let encoded = try? JSONEncoder().encode(fresh) {
-            try? AtomicFile.write(encoded, to: cacheURL)
+        do {
+            try AtomicFile.write(try JSONEncoder().encode(fresh), to: cacheURL)
+        } catch {
+            NSLog("4elka: не удалось сохранить кэш погоды: %@", String(describing: error))
         }
     }
 
