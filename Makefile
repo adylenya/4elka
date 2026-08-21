@@ -4,7 +4,7 @@ adapter:
 	bash vendor/build-adapter.sh
 
 test:
-	swift test
+	bash scripts/test.sh
 
 build:
 	swift build
