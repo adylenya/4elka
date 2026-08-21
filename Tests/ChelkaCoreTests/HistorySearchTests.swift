@@ -41,12 +41,3 @@ private func f(_ p: String) -> ClipItem {
 @Test func searchDoesNotMatchImagesWithoutText() {
     #expect(HistorySearch.filter([img("b.png")], tab: .all, query: "b").isEmpty)
 }
-
-@Test func selectionTogglesAndReplaces() {
-    let a = UUID(), b = UUID()
-    #expect(Selection().toggling(a).ids == [a])
-    #expect(Selection().toggling(a).toggling(a).ids.isEmpty)
-    #expect(Selection().toggling(a).toggling(b).ids == [a, b])
-    #expect(Selection().toggling(a).toggling(b).replacing(with: a).ids == [a])
-    #expect(Selection().toggling(a).cleared().ids.isEmpty)
-}

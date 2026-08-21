@@ -46,6 +46,10 @@ public struct HistoryGridView: View {
         }
         .padding(Config.HistoryGrid.padding)
         .onAppear { focus = .search }
+        // Выделение не должно переживать смену вкладки и строки поиска: `⌫` и
+        // `⌘P` иначе работают по невидимому, а отмены у нас нет.
+        .onChange(of: tab) { narrowSelectionToVisible() }
+        .onChange(of: query) { narrowSelectionToVisible() }
         .onExitCommand(perform: onClose)
     }
 
@@ -132,7 +136,17 @@ public struct HistoryGridView: View {
         focus = .grid
     }
 
+    /// Сужение зовётся и на смену вкладки с поиском, и перед самой операцией:
+    /// первое убирает рамку с того, что человек больше не видит, второе не даёт
+    /// невидимому попасть под операцию, даже если состояние успело разойтись.
+    private func narrowSelectionToVisible() {
+        let narrowed = selection.narrowed(to: visibleItems.map(\.id))
+        guard narrowed != selection else { return }
+        selection = narrowed
+    }
+
     private func removeSelected() -> KeyPress.Result {
+        narrowSelectionToVisible()
         guard !selection.isEmpty else { return .ignored }
         coordinator.remove(selection.ids)
         selection = selection.cleared()
@@ -140,6 +154,7 @@ public struct HistoryGridView: View {
     }
 
     private func pinSelected() -> KeyPress.Result {
+        narrowSelectionToVisible()
         guard !selection.isEmpty else { return .ignored }
         coordinator.togglePin(selection.ids)
         return .handled
