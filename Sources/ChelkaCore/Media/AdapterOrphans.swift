@@ -19,19 +19,32 @@ public enum AdapterOrphans {
     /// тестом на подделанном выводе, а не запуском процессов.
     public static func pids(inProcessList list: String, scriptPath: String) -> [Int32] {
         list.split(separator: "\n").compactMap { line -> Int32? in
-            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count >= 3,
-                  let pid = Int32(parts[0]),
-                  let parent = Int32(parts[1]),
-                  parent == Self.initProcess else { return nil }
-            let command = parts.dropFirst(2).joined(separator: " ")
+            guard let row = Self.row(in: line), row.parent == Self.initProcess else { return nil }
             // Проверка на `perl` обязательна: путь к скрипту встречается и в
             // командных строках компилятора, и по такому шаблону уже один раз
             // убили чужую сборку.
-            guard command.hasPrefix("\(Self.perlPath) "),
-                  command.contains(scriptPath) else { return nil }
-            return pid
+            guard row.command.hasPrefix("\(Self.perlPath) "),
+                  row.command.contains(scriptPath) else { return nil }
+            return row.pid
         }
+    }
+
+    /// Разбирает одну строку `ps` на два числа и командную строку.
+    ///
+    /// Командная строка берётся ОДНИМ куском по смещению в исходной строке, а
+    /// не пересклейкой полей через пробел: склейка схлопывает повторяющиеся
+    /// пробелы, и корень проекта с двойным пробелом в имени каталога перестаёт
+    /// совпадать — брошенные процессы не находятся вовсе.
+    private static func row(in line: Substring) -> (pid: Int32, parent: Int32, command: Substring)? {
+        let afterPid = line.drop(while: { $0 == " " })
+        guard let pidEnd = afterPid.firstIndex(of: " ") else { return nil }
+        let parentField = afterPid[pidEnd...].drop(while: { $0 == " " })
+        guard let parentEnd = parentField.firstIndex(of: " ") else { return nil }
+        let command = parentField[parentEnd...].drop(while: { $0 == " " })
+        guard let pid = Int32(afterPid[afterPid.startIndex..<pidEnd]),
+              let parent = Int32(parentField[parentField.startIndex..<parentEnd]),
+              !command.isEmpty else { return nil }
+        return (pid, parent, command)
     }
 
     /// Находит брошенные процессы и гасит их. Возвращает то, что погасило.

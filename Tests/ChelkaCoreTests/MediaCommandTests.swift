@@ -107,6 +107,16 @@ import Foundation
     #expect(killed.pids == [11, 12])
 }
 
+@Test func orphanScanSurvivesDoubleSpacesInsidePath() {
+    // Проверено: если хвост строки `ps` пересклеить через один пробел, корень
+    // проекта с двойным пробелом в имени каталога перестаёт совпадать — и
+    // брошенные процессы не находятся вовсе.
+    let script = "/Users/x/4elka  копия/vendor/mediaremote-adapter/bin/mediaremote-adapter.pl"
+    let framework = "/Users/x/4elka  копия/vendor/build/MediaRemoteAdapter.framework"
+    let ps = "86975     1 /usr/bin/perl \(script) \(framework) stream"
+    #expect(AdapterOrphans.pids(inProcessList: ps, scriptPath: script) == [86975])
+}
+
 @Test func sweepDoesNothingWhenProcessListIsUnavailable() {
     // `ps` не запустился — это не повод падать и не повод гасить наугад.
     final class Killed: @unchecked Sendable { var count = 0 }
