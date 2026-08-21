@@ -367,6 +367,11 @@ private func imageSnap(_ byte: UInt8) -> PasteboardSnapshot {
                                blobs: BlobStore(root: FileManager.default.temporaryDirectory))
 
     #expect(pb.string(forType: .string) == nil)
+    // И картинки там тоже нет: проверять только отсутствие текста мало —
+    // так тест прошёл бы и над буфером с чужими данными картинки.
+    #expect(pb.data(forType: .png) == nil)
+    #expect(pb.data(forType: .tiff) == nil)
+    #expect(pb.types?.isEmpty ?? true)
 }
 
 @Test func copyWritesFileURLsToGivenPasteboard() {
