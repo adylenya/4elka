@@ -1,19 +1,5 @@
 import Foundation
 
-public struct ActivityEvent: Equatable {
-    public enum Kind: Equatable { case battery }
-
-    public let kind: Kind
-    public let title: String
-    public let subtitle: String
-
-    public init(kind: Kind, title: String, subtitle: String) {
-        self.kind = kind
-        self.title = title
-        self.subtitle = subtitle
-    }
-}
-
 public struct BatteryAlert: Equatable {
     public enum Level: Equatable { case low, high, full }
 
