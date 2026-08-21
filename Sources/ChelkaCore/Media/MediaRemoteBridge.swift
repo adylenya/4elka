@@ -102,6 +102,16 @@ public final class MediaRemoteBridge: MediaSource, @unchecked Sendable {
             return
         }
 
+        // Перед своим запуском убираем брошенные прошлыми запусками процессы:
+        // адаптер переживает смерть хозяина и держит подписку на поток, пока
+        // не попробует записать в закрытую трубу — то есть неограниченно долго.
+        let orphans = AdapterOrphans.sweep(scriptPath: paths.script.path,
+                                           processList: AdapterOrphans.systemProcessList,
+                                           terminate: AdapterOrphans.terminatePolitely)
+        if !orphans.isEmpty {
+            NSLog("4elka: погашено брошенных процессов адаптера: %d", orphans.count)
+        }
+
         let p = Process()
         let outputPipe = Pipe()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
