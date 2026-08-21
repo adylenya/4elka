@@ -2,14 +2,21 @@ import Carbon.HIToolbox
 import Testing
 @testable import ChelkaCore
 
-@Test func defaultComboIsCommandShiftV() {
+@Test func defaultComboDoesNotStealPasteWithoutFormatting() {
+    // ⌘⇧V брать нельзя: это системная «вставка без форматирования» почти во
+    // всех редакторах и браузерах, а глобальная регистрация забирает сочетание
+    // себе. Тест закрепляет именно это требование, а не конкретные клавиши:
+    // сочетание по умолчанию обязано быть не ⌘⇧V.
     let combo = HotkeyCombo.defaultToggle
+    let pasteWithoutFormatting = HotkeyCombo(keyCode: UInt32(kVK_ANSI_V),
+                                             modifiers: UInt32(cmdKey | shiftKey))
+    #expect(combo != pasteWithoutFormatting)
     #expect(combo.keyCode == UInt32(kVK_ANSI_V))
-    #expect(combo.modifiers == UInt32(cmdKey | shiftKey))
+    #expect(combo.modifiers == UInt32(controlKey | optionKey))
 }
 
 @Test func displayNameIsHumanReadable() {
-    #expect(HotkeyCombo.defaultToggle.displayName == "⌘⇧V")
+    #expect(HotkeyCombo.defaultToggle.displayName == "⌃⌥V")
 }
 
 @Test func displayNameKeepsModifiersInOneStableOrder() {
