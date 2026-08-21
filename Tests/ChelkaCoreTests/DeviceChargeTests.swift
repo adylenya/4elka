@@ -41,6 +41,9 @@ private func fixture(_ name: String, _ ext: String) throws -> Data {
     let mac = try #require(MacBatteryParser.parse(text))
     #expect(mac.percent == 100)
     #expect(mac.source == .mac)
+    // В фикстуре состояние «charged» — оно обязано читаться как «на зарядке»,
+    // иначе следующая задача пришлёт «заряд на исходе» на полной батарее.
+    #expect(mac.isCharging)
 }
 
 @Test func macBatteryDetectsCharging() {
