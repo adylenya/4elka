@@ -184,6 +184,22 @@ public final class ClipboardCoordinator: ObservableObject {
         }
     }
 
+    /// Убрать файлы картинок, которых больше никто не держит. Зовётся при старте,
+    /// сразу после загрузки истории: элементы без файлов история отбрасывает сама,
+    /// а файлы без элементов убрать больше нечем — они оставались от каждого
+    /// падения между записью файла и записью индекса.
+    ///
+    /// Файлы, ждущие удаления после записи индекса, тоже считаются удерживаемыми:
+    /// индекс на диске всё ещё может на них ссылаться, и снести их раньше записи
+    /// значило бы потерять запись целиком.
+    public func collectOrphanBlobs(now: Date = Date()) {
+        let held = Set(history.items.compactMap(\.blobName)).union(blobsToDelete)
+        let orphans = BlobGarbage.collectable(files: blobs.files(), referenced: held, now: now)
+        guard !orphans.isEmpty else { return }
+        NSLog("4elka: убрано осиротевших файлов картинок: %d", orphans.count)
+        blobs.delete(orphans)
+    }
+
     /// Сбросить историю на диск немедленно. Зовётся при выходе из приложения:
     /// всё, что попало в окно задержки и живёт только в памяти, иначе пропало бы.
     public func flush() { saveNow() }

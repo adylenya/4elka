@@ -110,6 +110,11 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         let coordinator = ClipboardCoordinator(capture: capture, index: index, blobs: blobs,
                                                activity: activityCenter)
         clipboardCoordinator = coordinator
+        // История уже загружена, и это единственный момент, когда видно оба
+        // берега сразу: и ссылки из истории, и файлы в каталоге. Файл, на который
+        // ссылок не осталось, убрать больше нечем — он остаётся от каждого
+        // падения между записью картинки и записью индекса.
+        coordinator.collectOrphanBlobs()
 
         let watcher = PasteboardWatcher()
         watcher.onChange = { [weak self, weak coordinator] snapshot in

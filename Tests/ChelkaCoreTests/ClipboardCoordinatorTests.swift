@@ -177,6 +177,42 @@ private func imageSnap(_ byte: UInt8) -> PasteboardSnapshot {
     #expect(disk.launch().history.items.map(\.kind) == [.text("два"), .text("раз")])
 }
 
+/// Падение между записью файла и записью индекса оставляло файл на диске
+/// навсегда: `load()` отбрасывает элементы без файлов, а файлы без элементов
+/// не убирал никто. Потолок картинки — сорок мегабайт, так что каталог рос
+/// на каждом падении.
+@Test @MainActor func startupSweepsBlobsLeftBehindByACrash() {
+    let disk = Restartable()
+    let first = disk.launch()
+    first.handle(imageSnap(1), now: Date())   // индекс записан сразу
+    first.handle(imageSnap(2), now: Date())   // в окне задержки, до индекса не дошло
+    first.handle(imageSnap(3), now: Date())
+    #expect(first.history.items.count == 3)
+    #expect(disk.blobs.files().count == 3)
+
+    // «Падение»: процесс умер, отложенная запись индекса не состоялась.
+    let second = disk.launch()
+    #expect(second.history.items.count == 1)
+
+    second.collectOrphanBlobs(now: Date().addingTimeInterval(Config.History.orphanBlobGrace + 1))
+
+    #expect(disk.blobs.files().count == 1)
+    #expect(disk.blobs.exists(second.history.items[0].blobName ?? ""))
+}
+
+/// Уборка обязана щадить свежие файлы: файл картинки ложится на диск раньше
+/// индекса со ссылкой на него, и снести его в этом зазоре значит потерять
+/// только что скопированное.
+@Test @MainActor func startupSparesFilesTooFreshToBeOrphans() throws {
+    let disk = Restartable()
+    let coordinator = disk.launch()
+    let justWritten = try disk.blobs.write(Data([0x89, 0x50]), extension: "png")
+
+    coordinator.collectOrphanBlobs(now: Date())
+
+    #expect(disk.blobs.exists(justWritten))
+}
+
 @Test func cardTitleForImageMentionsScreenshotAndCarriesThumbnail() {
     let item = ClipItem(id: UUID(),
                         kind: .image(.init(blobName: "a.png", byteCount: 1,
