@@ -19,12 +19,6 @@ import SwiftUI
 public struct PlayerView: View {
     @ObservedObject private var coordinator: MediaCoordinator
 
-    /// Частота перерисовки полосы позиции. Не в `Config`: это частота
-    /// обновления экрана самой вьюхи, а не параметр поведения приложения,
-    /// который был бы нужен где-то ещё.
-    private static let positionTickInterval: TimeInterval = 0.5
-    private static let artworkSide: CGFloat = 56
-
     public init(coordinator: MediaCoordinator) {
         self.coordinator = coordinator
     }
@@ -41,7 +35,7 @@ public struct PlayerView: View {
     }
 
     private var player: some View {
-        TimelineView(.periodic(from: .now, by: Self.positionTickInterval)) { timeline in
+        TimelineView(.periodic(from: .now, by: Config.Media.positionTickInterval)) { timeline in
             HStack(spacing: 12) {
                 artworkView
                 VStack(alignment: .leading, spacing: 4) {
@@ -73,7 +67,7 @@ public struct PlayerView: View {
                     .fill(.quaternary)
             }
         }
-        .frame(width: Self.artworkSide, height: Self.artworkSide)
+        .frame(width: Config.Media.artworkSide, height: Config.Media.artworkSide)
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 

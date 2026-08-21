@@ -47,6 +47,10 @@ public enum Config {
     }
 
     public enum Media {
+        /// Как часто обновляется полоса позиции в интерфейсе.
+        public static let positionTickInterval: TimeInterval = 0.5
+        /// Сторона обложки в плеере.
+        public static let artworkSide: CGFloat = 56
         /// Поток без единого перевода строки — либо баг адаптера, либо чужая
         /// поломка. Не даём буферу расти неограниченно в ожидании перевода строки.
         public static let maxPendingBytes = 1 * 1024 * 1024

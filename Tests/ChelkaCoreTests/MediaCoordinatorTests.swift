@@ -29,8 +29,14 @@ private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
     return (c, source, { events })
 }
 
+// ВАЖНО: каждый тест обязан удерживать координатор в переменной, а не выбрасывать
+// его через `let (_, source, events) = make()`. Захват в координаторе слабый, и
+// выброшенный координатор немедленно уничтожается — события не придут, а тест
+// упадёт по причине, не имеющей отношения к проверяемому поведению.
+
 @Test @MainActor func cardOnTrackChange() {
-    let (_, source, events) = make()
+    let (coordinator, source, events) = make()
+    defer { _ = coordinator }
     source.emit(state(title: "Первый", playing: true))
     source.emit(state(title: "Второй", playing: true))
     #expect(events().count == 2)
@@ -38,7 +44,8 @@ private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
 }
 
 @Test @MainActor func cardOnPauseAndResume() {
-    let (_, source, events) = make()
+    let (coordinator, source, events) = make()
+    defer { _ = coordinator }
     source.emit(state(title: "Т", playing: true))
     source.emit(state(title: "Т", playing: false))
     source.emit(state(title: "Т", playing: true))
@@ -46,15 +53,41 @@ private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
 }
 
 @Test @MainActor func noCardOnPositionUpdatesOnly() {
-    let (_, source, events) = make()
+    let (coordinator, source, events) = make()
+    defer { _ = coordinator }
     source.emit(state(title: "Т", playing: true, elapsed: 5))
     source.emit(state(title: "Т", playing: true, elapsed: 10))
     source.emit(state(title: "Т", playing: true, elapsed: 15))
     #expect(events().count == 1)
 }
 
+@Test @MainActor func releasedCoordinatorStopsReceivingEvents() {
+    // Это и есть то поведение, которое цикл ссылок сделал бы непроверяемым.
+    let source = FakeSource()
+    var events: [ActivityEvent] = []
+    do {
+        let c = MediaCoordinator(source: source, panelState: { .hidden },
+                                submitActivity: { events.append($0) })
+        c.start()
+        source.emit(state(title: "Первый", playing: true))
+        #expect(events.count == 1)
+    }
+    source.emit(state(title: "Второй", playing: true))
+    #expect(events.count == 1)
+}
+
+@Test @MainActor func sameTrackFiresAgainAfterNothingPlaying() {
+    let (coordinator, source, events) = make()
+    defer { _ = coordinator }
+    source.emit(state(title: "Т", playing: true))
+    source.emit(.empty)
+    source.emit(state(title: "Т", playing: true))
+    #expect(events().count == 2)
+}
+
 @Test @MainActor func noCardWhenNothingIsPlaying() {
-    let (_, source, events) = make()
+    let (coordinator, source, events) = make()
+    defer { _ = coordinator }
     source.emit(.empty)
     #expect(events().isEmpty)
 }
