@@ -7,6 +7,7 @@ import AppKit
 /// забирает активацию у чужого приложения: за это отвечают стиль
 /// `.nonactivatingPanel` здесь и `setActivationPolicy(.accessory)` в точке
 /// входа приложения.
+@MainActor
 public final class NotchPanel: NSPanel {
     public override var canBecomeKey: Bool { true }
     public override var canBecomeMain: Bool { false }

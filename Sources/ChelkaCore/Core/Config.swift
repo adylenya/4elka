@@ -40,6 +40,10 @@ public enum Config {
         public static let fallbackWidth: CGFloat = 220
         public static let fallbackHeight: CGFloat = 32
         public static let expandedSize = CGSize(width: 640, height: 340)
+        /// Скругление стеклянных поверхностей.
+        public static let cornerRadius: CGFloat = 16
+        /// Расстояние, на котором соседнее стекло сливается в одно.
+        public static let glassGroupSpacing: CGFloat = 8
     }
 
     public enum Media {

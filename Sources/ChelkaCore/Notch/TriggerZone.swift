@@ -1,13 +1,20 @@
 import AppKit
 
 /// Прозрачное окно ровно по челке, которое ловит наведение и клик, когда
-/// панель скрыта (и её `resize(to:1pt height)` делает нечувствительной к мыши
-/// на всей своей площади). Без этого окна навести на схлопнутую челку и
-/// поймать hover/клик было бы нечем.
+/// панель скрыта. Без этого окна навести на схлопнутую челку и поймать
+/// hover/клик было бы нечем.
+@MainActor
 public final class TriggerZone {
     private let window: NSPanel
     private let onHover: (Bool) -> Void
     private let onClick: () -> Void
+
+    /// Пока панель раскрыта, зона обязана перестать принимать мышь. Иначе она
+    /// лежит поверх раскрытой панели и съедает нажатия в верхней её части —
+    /// в том числе начало перетаскивания, то есть главный жест приложения.
+    public func setInteractive(_ enabled: Bool) {
+        window.ignoresMouseEvents = !enabled
+    }
 
     public init(geometry: NotchGeometry,
                 onHover: @escaping (Bool) -> Void,
@@ -31,6 +38,7 @@ public final class TriggerZone {
         window.orderFrontRegardless()
     }
 
+    @MainActor
     private final class TrackingView: NSView {
         var onHover: ((Bool) -> Void)?
         var onClick: (() -> Void)?
