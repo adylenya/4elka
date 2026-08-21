@@ -35,6 +35,18 @@ public struct WeatherSnapshot: Equatable, Codable, Sendable {
 
     public var summary: String { "\(Int(celsius.rounded()))°" }
 
+    /// Возраст данных человеческими словами. Часы с минутами тут не годятся:
+    /// «14:32» у трёхдневной погоды читается как сегодняшняя, если сейчас
+    /// примерно тот же час — то есть это тихая ложь, а не пометка. Отдельная
+    /// чистая функция, потому что именно её и надо проверять тестом.
+    public func ageDescription(now: Date) -> String? {
+        let seconds = now.timeIntervalSince(observedAt)
+        guard seconds >= Config.Weather.staleAfter else { return nil }
+        let hours = Int(seconds / 3600)
+        if hours < 24 { return "\(hours) ч назад" }
+        return "\(hours / 24) дн назад"
+    }
+
     /// Коды WMO: 0 ясно, 1–3 переменная облачность, 45–48 туман,
     /// 51–67 дождь, 71–77 снег, 80–82 ливни, 95–99 гроза.
     public var symbol: String {

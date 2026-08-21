@@ -62,6 +62,44 @@ private let now = Date(timeIntervalSince1970: 10_000)
     #expect(broken.snapshot?.celsius == 5)
 }
 
+@Test func freshDataHasNoAgeLabel() {
+    let snapshot = try! #require(WeatherSnapshot.decode(
+        Data(#"{"current":{"temperature_2m":5,"apparent_temperature":3,"weather_code":1,"wind_speed_10m":2}}"#.utf8),
+        now: now))
+    #expect(snapshot.ageDescription(now: now.addingTimeInterval(60)) == nil)
+}
+
+@Test func staleDataSaysHowOldItIsInDaysNotJustAClock() {
+    // «14:32» у трёхдневной погоды читается как сегодняшняя. Возраст обязан
+    // называть дни, иначе пометка не спасает от тихой лжи.
+    let snapshot = try! #require(WeatherSnapshot.decode(
+        Data(#"{"current":{"temperature_2m":5,"apparent_temperature":3,"weather_code":1,"wind_speed_10m":2}}"#.utf8),
+        now: now))
+    #expect(snapshot.ageDescription(now: now.addingTimeInterval(3 * 3600)) == "3 ч назад")
+    #expect(snapshot.ageDescription(now: now.addingTimeInterval(3 * 86400)) == "3 дн назад")
+}
+
+@Test func rejectsCurrentBlockMissingALeafField() {
+    let json = #"{"current":{"temperature_2m":5,"apparent_temperature":3,"weather_code":1}}"#
+    #expect(WeatherSnapshot.decode(Data(json.utf8), now: now) == nil)
+}
+
+@Test @MainActor func startIsIdempotentAndDoesNotStackTimers() async {
+    var calls = 0
+    let provider = WeatherProvider(
+        cacheURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("idem-\(UUID().uuidString).json"),
+        fetch: { _ in
+            calls += 1
+            return Data(#"{"current":{"temperature_2m":5,"apparent_temperature":3,"weather_code":1,"wind_speed_10m":2}}"#.utf8)
+        })
+    provider.start()
+    provider.start()
+    await provider.refresh()
+    #expect(calls <= 2)
+    provider.stop()
+}
+
 @MainActor
 @Test func hasNoSnapshotWhenThereIsNeitherNetworkNorCache() async {
     struct Boom: Error {}
