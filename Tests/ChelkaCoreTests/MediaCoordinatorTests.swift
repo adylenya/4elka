@@ -2,14 +2,24 @@ import Testing
 import Foundation
 @testable import ChelkaCore
 
+@MainActor
 private final class FakeSource: MediaSource {
-    var onState: ((NowPlaying) -> Void)?
-    var onUnavailable: (() -> Void)?
+    private var onState: (@MainActor (NowPlaying) -> Void)?
+    private var onUnavailable: (@MainActor () -> Void)?
     var sent: [MediaCommand] = []
-    func start() {}
-    func stop() {}
+    private(set) var started = false
+    private(set) var stoppedTimes = 0
+
+    func start(onState: @escaping @MainActor (NowPlaying) -> Void,
+               onUnavailable: @escaping @MainActor () -> Void) {
+        self.onState = onState
+        self.onUnavailable = onUnavailable
+        started = true
+    }
+    func stop() { stoppedTimes += 1 }
     func send(_ command: MediaCommand) { sent.append(command) }
     func emit(_ s: NowPlaying) { onState?(s) }
+    func reportUnavailable() { onUnavailable?() }
 }
 
 private func state(title: String?, artist: String? = "и", playing: Bool,
@@ -101,8 +111,23 @@ private func make() -> (MediaCoordinator, FakeSource, () -> [ActivityEvent]) {
     let source = FakeSource()
     let c = MediaCoordinator(source: source, submitActivity: { _ in })
     c.start()
-    source.onUnavailable?()
+    source.reportUnavailable()
     #expect(!c.isAvailable)
+}
+
+/// Обработчики попадают в источник только через `start` — снаружи их поставить
+/// уже нечем, и «пишет их только координатор с главного актора» стало правилом
+/// языка, а не обещанием на словах.
+@Test @MainActor func callbacksArriveOnlyThroughStart() {
+    let source = FakeSource()
+    let c = MediaCoordinator(source: source, submitActivity: { _ in })
+    #expect(!source.started)
+
+    c.start()
+
+    #expect(source.started)
+    source.emit(state(title: "Т", playing: true))
+    #expect(c.state.title == "Т")
 }
 
 // MARK: - Обложка

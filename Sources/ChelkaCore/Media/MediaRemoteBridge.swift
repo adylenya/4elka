@@ -26,9 +26,16 @@ public struct AdapterPaths {
 
 /// Один долгоживущий процесс на чтение потока плюс короткие вызовы на команды.
 /// Обход энтайтлмента macOS 15.4+: perl уже энтайтлен, поэтому фреймворк грузит он.
-public final class MediaRemoteBridge: MediaSource, @unchecked Sendable {
-    public var onState: ((NowPlaying) -> Void)?
-    public var onUnavailable: (() -> Void)?
+///
+/// Соответствие `MediaSource` объявлено расширением ниже, а не здесь: в
+/// основном объявлении класса оно затянуло бы на главный актор ВСЁ содержимое,
+/// включая состояние, которое живёт на очереди супервизора.
+public final class MediaRemoteBridge: @unchecked Sendable {
+    /// Обработчики приходят в `start` и дальше только читаются. Снаружи их
+    /// поставить нельзя — иначе неизолированный источник опять разрешал бы
+    /// запись из любого потока.
+    private var onState: (@MainActor (NowPlaying) -> Void)?
+    private var onUnavailable: (@MainActor () -> Void)?
 
     private let paths: AdapterPaths
     /// Всё изменяемое состояние живёт на одной последовательной очереди.
@@ -46,8 +53,11 @@ public final class MediaRemoteBridge: MediaSource, @unchecked Sendable {
 
     public init(paths: AdapterPaths) { self.paths = paths }
 
-    public func start() {
+    public func start(onState: @escaping @MainActor (NowPlaying) -> Void,
+                      onUnavailable: @escaping @MainActor () -> Void) {
         supervision.async { [self] in
+            self.onState = onState
+            self.onUnavailable = onUnavailable
             stopped = false
             policy = .initial
             launchLocked()
@@ -162,8 +172,12 @@ public final class MediaRemoteBridge: MediaSource, @unchecked Sendable {
         }
     }
 
+    /// Обработчики изолированы на главный актор, поэтому и зовём их только
+    /// оттуда: очередь главного потока — это он и есть.
     private func reportUnavailable() {
-        DispatchQueue.main.async { [weak self] in self?.onUnavailable?() }
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.onUnavailable?() }
+        }
     }
 
     /// Вызывается только на очереди супервизора.
@@ -175,6 +189,13 @@ public final class MediaRemoteBridge: MediaSource, @unchecked Sendable {
             state = state.applying(parsed)
         }
         let snapshot = state
-        DispatchQueue.main.async { [weak self] in self?.onState?(snapshot) }
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.onState?(snapshot) }
+        }
     }
 }
+
+/// Само соответствие протоколу. Методы объявлены выше в теле класса и
+/// неизолированы: неизолированный код можно звать откуда угодно, в том числе с
+/// главного актора, поэтому требование, изолированное на него, он выполняет.
+extension MediaRemoteBridge: MediaSource {}

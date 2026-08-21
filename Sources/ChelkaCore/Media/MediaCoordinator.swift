@@ -52,9 +52,8 @@ public final class MediaCoordinator: ObservableObject {
     /// координатор перестаёт получать события: цикл ссылок держал бы его вечно.
     /// Владелец обязан хранить координатор сам — тест тоже.
     public func start() {
-        source.onState = { [weak self] s in self?.ingest(s) }
-        source.onUnavailable = { [weak self] in self?.isAvailable = false }
-        source.start()
+        source.start(onState: { [weak self] s in self?.ingest(s) },
+                     onUnavailable: { [weak self] in self?.isAvailable = false })
     }
 
     public func send(_ command: MediaCommand) { source.send(command) }

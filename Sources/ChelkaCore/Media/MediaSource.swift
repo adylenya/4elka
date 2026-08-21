@@ -4,10 +4,19 @@ public enum MediaCommand: Int {
     case play = 0, pause = 1, toggle = 2, next = 4, previous = 5
 }
 
+/// Источник состояния плеера.
+///
+/// Изоляция на главный актор и приём замыканий в `start` — не украшение.
+/// Раньше это были публичные изменяемые свойства неизолированного протокола:
+/// писать их разрешалось откуда угодно и когда угодно, хотя читает их источник
+/// с чужой очереди. Фактически писал только координатор с главного актора, то
+/// есть ручное обещание потокобезопасности прикрывало настоящую дыру — и в
+/// первый же день, когда кто-то поставил бы обработчик из другого потока,
+/// вернулась бы гонка, которую нечем поймать.
+@MainActor
 public protocol MediaSource: AnyObject {
-    var onState: ((NowPlaying) -> Void)? { get set }
-    var onUnavailable: (() -> Void)? { get set }
-    func start()
+    func start(onState: @escaping @MainActor (NowPlaying) -> Void,
+               onUnavailable: @escaping @MainActor () -> Void)
     func stop()
     func send(_ command: MediaCommand)
 }

@@ -10,6 +10,7 @@ private func mouse(_ type: NSEvent.EventType, at point: NSPoint) -> NSEvent? {
                        windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
 }
 
+@MainActor
 private func view() -> DragSourceView {
     DragSourceView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
 }
