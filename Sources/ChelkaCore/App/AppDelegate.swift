@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 @MainActor
@@ -7,6 +8,9 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private var trigger: TriggerZone?
     private var machine = PanelStateMachine()
     private var geometry = NotchGeometry(rect: .zero, hasPhysicalNotch: false)
+    // Аварийный выход: единственный способ управлять и выключить приложение,
+    // раз у него нет иконки в доке.
+    private var statusItem: StatusItemController?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         guard let screen = NSScreen.main else { return }
@@ -24,6 +28,10 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         trigger = TriggerZone(geometry: geometry,
                               onHover: { [weak self] inside in self?.apply { $0.hovering(inside) } },
                               onClick: { [weak self] in self?.apply { $0.clicked() } })
+
+        let statusItem = StatusItemController { [weak self] action in self?.handle(action) }
+        self.statusItem = statusItem
+        refreshStatusItem()
     }
 
     private func apply(_ transition: (PanelStateMachine) -> PanelStateMachine) {
@@ -45,5 +53,41 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         }
         // Зона-триггер молчит, пока панель раскрыта, чтобы не воровать у неё мышь.
         trigger?.setInteractive(machine.state != .expanded)
+        refreshStatusItem()
+    }
+
+    private func refreshStatusItem() {
+        statusItem?.refresh(panel: machine.state,
+                            launchesAtLogin: SMAppService.mainApp.status == .enabled)
+    }
+
+    private func handle(_ action: StatusMenuAction) {
+        switch action {
+        case .showPanel:
+            apply { _ in PanelStateMachine(state: .expanded) }
+        case .openSettings:
+            // Заглушка: настоящее окно настроек — Task 26.
+            let alert = NSAlert()
+            alert.messageText = "Настройки"
+            alert.informativeText = "Здесь будет окно настроек."
+            alert.runModal()
+        case .toggleLaunchAtLogin:
+            let service = SMAppService.mainApp
+            do {
+                if service.status == .enabled {
+                    try service.unregister()
+                } else {
+                    try service.register()
+                }
+            } catch {
+                // Из дерева сборки регистрация не сработает, потому что
+                // приложение не лежит в /Applications — это нормально.
+                // Ошибку пишем в лог, а не глотаем и не выдаём за успех.
+                NSLog("4elka: не удалось изменить автозапуск: %@", String(describing: error))
+            }
+            refreshStatusItem()
+        case .quit:
+            NSApp.terminate(nil)
+        }
     }
 }
