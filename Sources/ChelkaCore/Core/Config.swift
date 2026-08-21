@@ -5,6 +5,10 @@ public enum Config {
     /// Общая таймзона приложения: её используют и погода, и преобразование времени.
     public static let timezone = "Asia/Almaty"
 
+    /// Идентификатор бандла самого приложения — по нему `IgnoreRules` отличает
+    /// собственные записи в буфере (например, клик по элементу истории) от чужих.
+    public static let ownBundleID = "com.adylenya.4elka"
+
     public enum History {
         public static let textLimit = 200
         public static let imageLimit = 30
@@ -24,6 +28,13 @@ public enum Config {
 
     public enum Activity {
         public static let duration: TimeInterval = 3
+        /// Как часто тикает таймер, гасящий карточку по истечении `duration`.
+        public static let tickInterval: TimeInterval = 0.25
+        /// Насколько карточка шире самой челки — под текст и миниатюру.
+        public static let cardExtraWidth: CGFloat = 260
+        /// Минимальная ширина карточки на экранах без физической челки.
+        public static let cardMinWidth: CGFloat = 320
+        public static let cardHeight: CGFloat = 54
     }
 
     public enum Weather {
