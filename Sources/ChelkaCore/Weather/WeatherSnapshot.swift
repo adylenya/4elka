@@ -21,16 +21,42 @@ public struct WeatherSnapshot: Equatable, Codable, Sendable {
     }
 
     /// Внешним данным не доверяем: ответ вне разумного диапазона считаем сбоем.
-    public static func decode(_ data: Data, now: Date) -> WeatherSnapshot? {
-        guard let response = try? JSONDecoder().decode(Response.self, from: data) else { return nil }
+    ///
+    /// Отказ — не `nil`, а названная причина: «вместо погоды пришла страница»
+    /// и «пришло 900 градусов» лечатся по-разному, и в логе их обязано быть
+    /// видно по отдельности. `nil` на оба исхода однажды и превратил обрыв сети,
+    /// заглушку прокси и мусорный ответ в один молчаливый выход.
+    public static func decoded(_ data: Data,
+                               now: Date) -> Result<WeatherSnapshot, WeatherResponseProblem> {
+        guard let response = try? JSONDecoder().decode(Response.self, from: data) else {
+            return .failure(.notWeatherAnswer(bytes: data.count, beginning: preview(of: data)))
+        }
         let c = response.current
         guard Config.Weather.plausibleCelsius.contains(c.temperature_2m),
-              Config.Weather.plausibleCelsius.contains(c.apparent_temperature) else { return nil }
-        return WeatherSnapshot(celsius: c.temperature_2m,
-                               feelsLike: c.apparent_temperature,
-                               windKph: c.wind_speed_10m,
-                               code: c.weather_code,
-                               observedAt: now)
+              Config.Weather.plausibleCelsius.contains(c.apparent_temperature) else {
+            return .failure(.implausibleTemperature(celsius: c.temperature_2m,
+                                                    feelsLike: c.apparent_temperature))
+        }
+        return .success(WeatherSnapshot(celsius: c.temperature_2m,
+                                        feelsLike: c.apparent_temperature,
+                                        windKph: c.wind_speed_10m,
+                                        code: c.weather_code,
+                                        observedAt: now))
+    }
+
+    /// Тем, кому причина отказа не нужна.
+    public static func decode(_ data: Data, now: Date) -> WeatherSnapshot? {
+        try? decoded(data, now: now).get()
+    }
+
+    /// Начало ответа для лога. За прокси на месте JSON лежит HTML-заглушка, и
+    /// увидеть её первые слова — единственный способ понять это по логу.
+    /// Ответ обрезается и склеивается в одну строку: страница целиком в логе не
+    /// нужна, а её переводы строк превратили бы одну запись в десяток.
+    private static func preview(of data: Data) -> String {
+        let text = String(decoding: data.prefix(Config.Weather.previewBytes), as: UTF8.self)
+        let squeezed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return squeezed.isEmpty ? "(пусто)" : squeezed
     }
 
     public var summary: String { "\(Int(celsius.rounded()))°" }

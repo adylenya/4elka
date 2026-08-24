@@ -8,16 +8,27 @@ import Foundation
 /// город, интервал обновления и порог устаревания должны доходить до погоды
 /// сразу, а не после перезапуска приложения.
 ///
-/// Сети нет — остаёмся на кэше на диске (через `AtomicFile`), а не показываем
+/// Сети нет — остаёмся на кэше на диске (через `StateFile`), а не показываем
 /// ноль или прочерк: вчерашние 20 градусов честнее, чем ничего.
+///
+/// Молчать про отказ при этом нельзя. Три исхода — сети нет, прокси отдал
+/// страницу-заглушку, пришло 900 градусов — раньше давали один и тот же
+/// молчаливый выход: погода не обновлялась, в интерфейсе тихо висело
+/// «3 дн назад», а в логе за трое суток не было ни строчки. Теперь каждый
+/// исход называет себя, и куда ругаться — параметр, иначе «об этом сказано в
+/// лог» нечем проверить тестом.
 @MainActor
 public final class WeatherProvider: ObservableObject {
     @Published public private(set) var snapshot: WeatherSnapshot?
 
-    private let cacheURL: URL
+    /// Кэш на диске. Тот же `StateFile`, что у истории и полки: испорченный
+    /// файл откладывается в сторону с записью в лог, а не перечитывается и
+    /// молча выбрасывается при каждом запуске.
+    private let cache: StateFile
     private let settings: () -> WeatherSettings
     private let timers: RefreshTimers
     private let fetch: (URL) async throws -> Data
+    private let log: (String) -> Void
     private var timer: RefreshTimer?
     /// С каким интервалом заведён таймер. Нужно, чтобы поймать смену интервала
     /// в настройках: без этого «раз в минуту» вступало бы в силу только после
@@ -33,12 +44,14 @@ public final class WeatherProvider: ObservableObject {
                 timers: RefreshTimers = SystemRefreshTimers(),
                 fetch: @escaping (URL) async throws -> Data = { url in
                     try await URLSession.shared.data(from: url).0
-                }) {
-        self.cacheURL = cacheURL
+                },
+                log: @escaping (String) -> Void = { NSLog("4elka: %@", $0) }) {
+        self.cache = StateFile(fileURL: cacheURL, subject: "кэш погоды")
         self.settings = settings
         self.timers = timers
         self.fetch = fetch
-        snapshot = Self.loadCache(cacheURL)
+        self.log = log
+        snapshot = cache.read(WeatherSnapshot.self)
     }
 
     /// Текущие настройки погоды. Отдаются наружу, чтобы вьюхе не приходилось
@@ -104,7 +117,8 @@ public final class WeatherProvider: ObservableObject {
     }
 
     /// Сети нет — остаёмся на кэше. Показывать ноль или пустоту было бы хуже,
-    /// чем показать вчерашние 20 градусов.
+    /// чем показать вчерашние 20 градусов. Но каждый отказ называет себя в логе:
+    /// иначе погода, не обновляющаяся месяц, выглядит как «иногда устаревает».
     public func refresh() async {
         // Без этого замка медленный старый ответ мог завершиться позже быстрого
         // нового и молча перезаписать свежие данные устаревшими.
@@ -112,18 +126,34 @@ public final class WeatherProvider: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        guard let data = try? await fetch(requestURL),
-              let fresh = WeatherSnapshot.decode(data, now: Date()) else { return }
-        snapshot = fresh
+        let data: Data
         do {
-            try AtomicFile.write(try JSONEncoder().encode(fresh), to: cacheURL)
+            data = try await fetch(requestURL)
         } catch {
-            NSLog("4elka: не удалось сохранить кэш погоды: %@", String(describing: error))
+            // Хост в сообщении не для красоты: по нему видно, что запрос вообще
+            // ушёл туда, куда собирались, — а с прокси это не самоочевидно.
+            log("погода не получена от \(requestURL.host ?? requestURL.absoluteString): "
+                + "\(String(describing: error))")
+            return
+        }
+
+        switch WeatherSnapshot.decoded(data, now: Date()) {
+        case .failure(let problem):
+            log(problem.message)
+        case .success(let fresh):
+            snapshot = fresh
+            save(fresh)
         }
     }
 
-    private static func loadCache(_ url: URL) -> WeatherSnapshot? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(WeatherSnapshot.self, from: data)
+    /// Незаписавшийся кэш — тоже отказ: погода после него живёт только в памяти
+    /// и пропадает при выходе.
+    private func save(_ fresh: WeatherSnapshot) {
+        do {
+            try cache.write(fresh)
+        } catch {
+            log("кэш погоды не записан, данные останутся только в памяти: "
+                + "\(String(describing: error))")
+        }
     }
 }
