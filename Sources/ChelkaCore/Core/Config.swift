@@ -103,6 +103,10 @@ public enum Config {
         public static let dropHighlightCornerRadius: CGFloat = 10
         /// Сколько строк имени файла видно на плитке полки.
         public static let nameLineLimit = 2
+        /// Куда macOS монтирует съёмные и сетевые тома. По этому пути видно,
+        /// на каком томе лежит запись полки, и надо ли искать этот том
+        /// в списке смонтированных, прежде чем считать файл пропавшим.
+        public static let volumesRoot = "/Volumes"
     }
 
     public enum Battery {

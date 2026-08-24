@@ -53,9 +53,129 @@ private func touch(_ url: URL) {
 @Test func prunesEntriesWhoseFileWasDeleted() {
     // Полка хранит ссылки, а не копии: файл могли удалить или переместить.
     let s = ShelfStore().adding([u("/tmp/жив.pdf"), u("/tmp/удалён.pdf")], now: now)
-    let pruned = s.prunedOfMissingFiles { $0.lastPathComponent == "жив.pdf" }
+    let pruned = s.prunedOfMissingFiles { $0.lastPathComponent == "жив.pdf" ? .present : .missing }
     #expect(pruned.items.count == 1)
     #expect(pruned.items.first?.name == "жив.pdf")
+}
+
+// MARK: - Отключённый том
+
+/// Уснувший NAS или вынутый на минуту внешний диск — это НЕ «файл удалили».
+/// Выметание такой записи стирает её насовсем: файл полки тут же
+/// перезаписывается, и вернувшийся том находит пустую полку.
+@Test func prunedShelfKeepsEntryWhoseVolumeIsAsleep() {
+    let s = ShelfStore().adding([u("/Volumes/NAS/отчёт.pdf")], now: now)
+    let pruned = s.prunedOfMissingFiles { _ in .volumeUnavailable }
+    #expect(pruned.items.count == 1)
+    #expect(pruned.items.first?.name == "отчёт.pdf")
+}
+
+/// Оставить запись мало: человек обязан видеть, почему файл не открывается.
+@Test func prunedShelfMarksEntryWhoseVolumeIsAsleep() {
+    let s = ShelfStore().adding([u("/Volumes/NAS/отчёт.pdf")], now: now)
+    #expect(s.prunedOfMissingFiles { _ in .volumeUnavailable }
+        .items.first?.isVolumeUnavailable == true)
+    // Том вернулся — пометка снимается сама, отдельного «забудь» не нужно.
+    #expect(s.prunedOfMissingFiles { _ in .volumeUnavailable }
+        .prunedOfMissingFiles { _ in .present }
+        .items.first?.isVolumeUnavailable == false)
+}
+
+/// Пометка — наблюдение, а не хранимое поле: на диск она не уезжает, иначе
+/// вернувшийся том оставил бы её висеть до следующей перепроверки.
+@Test func volumeMarkIsNotWrittenToDisk() throws {
+    let file = shelfDir().appendingPathComponent("shelf.json")
+    let index = ShelfIndex(fileURL: file)
+    let asleep = ShelfStore().adding([u("/Volumes/NAS/отчёт.pdf")], now: now)
+        .prunedOfMissingFiles { _ in .volumeUnavailable }
+    try index.save(asleep)
+    let loaded = index.load { _ in .present }
+    #expect(loaded.items.first?.isVolumeUnavailable == false)
+}
+
+@Test func shelfLoadKeepsEntryOnSleepingVolume() throws {
+    let dir = shelfDir()
+    let index = ShelfIndex(fileURL: dir.appendingPathComponent("shelf.json"))
+    try index.save(ShelfStore().adding([u("/Volumes/NAS/отчёт.pdf")], now: now))
+    let loaded = index.load { _ in .volumeUnavailable }
+    #expect(loaded.items.count == 1)
+    #expect(loaded.items.first?.isVolumeUnavailable == true)
+}
+
+/// Тот самый сценарий целиком: файл с сетевого тома лежит на полке, NAS уснул,
+/// человек открыл панель — перепроверка НЕ имеет права ни выметать запись, ни
+/// перезаписывать файл полки пустотой. Том вернулся — файл снова на полке.
+@Test @MainActor func shelfSurvivesVolumeFallingAsleepAndComingBack() async throws {
+    let dir = shelfDir()
+    let index = ShelfIndex(fileURL: dir.appendingPathComponent("shelf.json"))
+    let onNas = u("/Volumes/NAS/отчёт.pdf")
+
+    let asleep = ShelfCoordinator(index: index, reachability: { _ in .volumeUnavailable })
+    asleep.add([onNas], now: now)
+    await asleep.pruneMissingFiles()
+    #expect(asleep.shelf.items.count == 1)
+    #expect(asleep.shelf.items.first?.isVolumeUnavailable == true)
+
+    // Том вернулся: новая перепроверка находит файл на месте.
+    let awake = ShelfCoordinator(index: index, reachability: { _ in .present })
+    await awake.load()
+    #expect(awake.shelf.items.first?.name == "отчёт.pdf")
+    #expect(awake.shelf.items.first?.isVolumeUnavailable == false)
+}
+
+/// А удалённый файл на живом томе по-прежнему выметается: самолечение полки
+/// никуда не делось.
+@Test @MainActor func shelfStillForgetsFileDeletedOnALiveVolume() async {
+    let dir = shelfDir()
+    let coordinator = ShelfCoordinator(index: ShelfIndex(fileURL: dir.appendingPathComponent("shelf.json")),
+                                       reachability: { _ in .missing })
+    coordinator.add([u("/tmp/удалён.pdf")], now: now)
+    await coordinator.pruneMissingFiles()
+    #expect(coordinator.shelf.items.isEmpty)
+}
+
+// MARK: - Достижимость пути
+
+@Test func unmountedVolumeIsNotMistakenForDeletedFile() {
+    let probe = FileReachabilityProbe.reachability(of: u("/Volumes/NAS/отчёт.pdf"),
+                                                  fileExists: { _ in false },
+                                                  mountedVolumes: ["/"])
+    #expect(probe == .volumeUnavailable)
+}
+
+@Test func mountedVolumeWithoutTheFileIsAMissingFile() {
+    let probe = FileReachabilityProbe.reachability(of: u("/Volumes/NAS/отчёт.pdf"),
+                                                  fileExists: { _ in false },
+                                                  mountedVolumes: ["/", "/Volumes/NAS"])
+    #expect(probe == .missing)
+}
+
+@Test func existingFileIsPresentWhateverIsMounted() {
+    #expect(FileReachabilityProbe.reachability(of: u("/Volumes/NAS/отчёт.pdf"),
+                                               fileExists: { _ in true },
+                                               mountedVolumes: []) == .present)
+}
+
+/// На загрузочном томе спрашивать нечего: он всегда на месте, и пропавший
+/// файл там пропал по-настоящему.
+@Test func missingFileOnBootVolumeIsMissingNotUnreachable() {
+    #expect(FileReachabilityProbe.reachability(of: u("/tmp/удалён.pdf"),
+                                               fileExists: { _ in false },
+                                               mountedVolumes: []) == .missing)
+}
+
+@Test func volumeRootIsTakenFromPathUnderVolumes() {
+    #expect(FileReachabilityProbe.volumeRoot(of: u("/Volumes/NAS/папка/отчёт.pdf")) == "/Volumes/NAS")
+    // Сам корень тома тоже можно бросить на полку.
+    #expect(FileReachabilityProbe.volumeRoot(of: u("/Volumes/NAS")) == "/Volumes/NAS")
+    #expect(FileReachabilityProbe.volumeRoot(of: u("/Users/я/отчёт.pdf")) == nil)
+    #expect(FileReachabilityProbe.volumeRoot(of: u("/Volumes")) == nil)
+}
+
+/// Загрузочный том всегда среди смонтированных — иначе всё выглядело бы
+/// недостижимым, и полка перестала бы самолечиться вовсе.
+@Test func mountedVolumesAlwaysContainTheBootVolume() {
+    #expect(FileReachabilityProbe.mountedVolumePaths().contains("/"))
 }
 
 @Test func airDropRefusesEmptySelection() {

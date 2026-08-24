@@ -17,7 +17,7 @@ public struct ShelfIndex: Sendable {
     /// Настоящая проверка файловой системы. Зовётся вне главной очереди —
     /// см. `ShelfCoordinator.load`.
     public func load() -> ShelfStore {
-        load(fileExists: Self.fileExistsOnDisk)
+        load(reachability: FileReachabilityProbe.onDisk)
     }
 
     /// Пустая полка — это только отсутствие файла. Битый файл откладывается
@@ -26,17 +26,14 @@ public struct ShelfIndex: Sendable {
     /// в `StateFile`.
     ///
     /// Записи с пропавшими файлами отбрасываются: полка самолечится, как и
-    /// история.
+    /// история. Записи на недостижимом томе остаются с пометкой — см.
+    /// `ShelfStore.prunedOfMissingFiles`.
     ///
-    /// Проверка существования вынесена в параметр ради тестов: они не должны
-    /// зависеть от того, что лежит на настоящем диске.
-    public func load(fileExists: (URL) -> Bool) -> ShelfStore {
+    /// Проверка достижимости вынесена в параметр ради тестов: они не должны
+    /// зависеть ни от того, что лежит на настоящем диске, ни от того, что
+    /// на машине смонтировано.
+    public func load(reachability: (URL) -> FileReachability) -> ShelfStore {
         guard let items = file.read([ShelfItem].self) else { return ShelfStore() }
-        return ShelfStore(items: items).prunedOfMissingFiles(fileExists: fileExists)
-    }
-
-    /// Каталог тоже существует: брошенную на челку папку выметать нельзя.
-    public static func fileExistsOnDisk(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path)
+        return ShelfStore(items: items).prunedOfMissingFiles(reachability: reachability)
     }
 }

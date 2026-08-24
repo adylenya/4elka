@@ -11,16 +11,27 @@ public final class ShelfCoordinator: ObservableObject {
     @Published public private(set) var shelf = ShelfStore()
 
     private let index: ShelfIndex
+    /// Проверка достижимости пути. Подменяется в тестах: они не должны зависеть
+    /// от того, что смонтировано на машине, где их запускают.
+    private let reachability: @Sendable (URL) -> FileReachability
 
-    public init(index: ShelfIndex) { self.index = index }
+    public init(index: ShelfIndex,
+                reachability: @escaping @Sendable (URL) -> FileReachability
+                    = FileReachabilityProbe.onDisk) {
+        self.index = index
+        self.reachability = reachability
+    }
 
     /// Чтение полки целиком уходит с главной очереди: внутри настоящая
-    /// проверка существования каждого файла, а файл мог остаться на сетевом
+    /// проверка достижимости каждого файла, а файл мог остаться на сетевом
     /// или съёмном томе — такая проверка отвечает секундами, и на главной
     /// очереди она заморозила бы интерфейс на старте.
     public func load() async {
         let index = self.index
-        shelf = await Task.detached(priority: .utility) { index.load() }.value
+        let reachability = self.reachability
+        shelf = await Task.detached(priority: .utility) {
+            index.load(reachability: reachability)
+        }.value
     }
 
     /// Перепроверка перед показом полки: пока панель была закрыта, файлы могли
@@ -28,8 +39,9 @@ public final class ShelfCoordinator: ObservableObject {
     /// что и `load`.
     public func pruneMissingFiles() async {
         let snapshot = shelf
+        let reachability = self.reachability
         let pruned = await Task.detached(priority: .utility) {
-            snapshot.prunedOfMissingFiles(fileExists: ShelfIndex.fileExistsOnDisk)
+            snapshot.prunedOfMissingFiles(reachability: reachability)
         }.value
         guard pruned != shelf else { return }
         shelf = pruned
