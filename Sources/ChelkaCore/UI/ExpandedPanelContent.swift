@@ -78,7 +78,7 @@ public struct ExpandedPanelContent: View {
                 .frame(width: Config.Panel.calendarWidth)
             Divider()
             VStack(alignment: .leading, spacing: Config.Panel.rowSpacing) {
-                WeatherView(provider: services.weather)
+                WeatherView(provider: services.weather, city: { services.weatherCity })
                 Divider()
                 DevicesView(provider: services.devices,
                             showsPhone: { services.showsPhone })

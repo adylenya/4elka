@@ -137,4 +137,9 @@ public final class ServiceContainer {
 
     /// Что показывать в плеере — по той же причине читается при отрисовке.
     public var playerOptions: PlayerOptions { settings().playerOptions }
+
+    /// Название города для подписи над погодой. Не через `WeatherSettings`:
+    /// тот тип отвечает только за то, что реально нужно запросу (координаты,
+    /// интервал), а имя — просто подпись человеку, координаты с ним не сверяют.
+    public var weatherCity: String { settings().weatherCity }
 }

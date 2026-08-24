@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Текущая погода для нижней полосы панели: символ и градусы из снимка
-/// `WeatherProvider`. Тема только системная — используются исключительно
+/// Погода для нижней полосы панели: город, текущая температура и несколько
+/// часов вперёд. Тема только системная — используются исключительно
 /// семантические цвета (`.primary`, `.secondary`).
 ///
 /// Если снимка нет вовсе (ни сети, ни кэша на диске) — строка «погода
@@ -16,32 +16,67 @@ import SwiftUI
 /// `WeatherSnapshot` и `WeatherProvider`.
 public struct WeatherView: View {
     @ObservedObject private var provider: WeatherProvider
+    private let city: () -> String
 
-    public init(provider: WeatherProvider) {
+    public init(provider: WeatherProvider, city: @escaping () -> String) {
         self.provider = provider
+        self.city = city
     }
 
     public var body: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 2) {
             if let snapshot = provider.snapshot {
-                Image(systemName: snapshot.symbol)
-                    .font(.system(size: Config.Panel.weatherIconSize))
-                    .foregroundStyle(.primary)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(snapshot.summary)
-                        .font(.system(size: Config.Panel.weatherTemperatureSize, weight: .medium))
-                        .foregroundStyle(.primary)
-                    if let age = snapshot.ageDescription(now: Date(),
-                                                         staleAfter: provider.current.staleAfter) {
-                        Text(age)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                current(snapshot)
+                if !snapshot.upcoming.isEmpty {
+                    upcoming(snapshot.upcoming)
                 }
             } else {
                 Text(PanelPlaceholder.weather)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func current(_ snapshot: WeatherSnapshot) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: snapshot.symbol)
+                .font(.system(size: Config.Panel.weatherIconSize))
+                .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(city())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(snapshot.summary)
+                    .font(.system(size: Config.Panel.weatherTemperatureSize, weight: .medium))
+                    .foregroundStyle(.primary)
+                if let age = snapshot.ageDescription(now: Date(),
+                                                     staleAfter: provider.current.staleAfter) {
+                    Text(age)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    /// Ряд из нескольких карточек-часов. Число часов решает
+    /// `Config.Weather.forecastHours` на стороне запроса — вьюха просто
+    /// рисует то, что пришло, и не считает, сколько показывать.
+    private func upcoming(_ hours: [WeatherSnapshot.HourlyForecast]) -> some View {
+        HStack(spacing: 10) {
+            ForEach(hours, id: \.hour) { point in
+                VStack(spacing: 1) {
+                    Text(point.hour)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: WeatherSnapshot.symbol(forCode: point.code))
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                    Text("\(Int(point.celsius.rounded()))°")
+                        .font(.caption2)
+                        .foregroundStyle(.primary)
+                }
             }
         }
     }

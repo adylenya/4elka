@@ -71,6 +71,8 @@ public final class WeatherProvider: ObservableObject {
             .init(name: "longitude", value: String(settings.longitude)),
             .init(name: "current",
                   value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m"),
+            .init(name: "hourly", value: "temperature_2m,weather_code"),
+            .init(name: "forecast_hours", value: String(Config.Weather.forecastHours)),
             .init(name: "timezone", value: Config.timezone),
         ]
         return components.url!

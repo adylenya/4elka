@@ -21,13 +21,11 @@ public enum SettingsApplication {
         "firstWeekdayFollowsSystem", "firstWeekday",
         "showsArtwork", "showsPositionBar",
         "hotkeyKeyCode", "hotkeyModifiers",
-        "opensOnHover",
+        "opensOnHover", "weatherCity",
     ]
 
     /// Поля без поведения — они только подпись для человека, а не переключатель.
-    /// `weatherCity` в расчёт погоды не входит: координаты решают, а имя
-    /// города — просто читаемая подпись рядом с ними в окне настроек.
-    public static let cosmeticFields: Set<String> = ["weatherCity"]
+    public static let cosmeticFields: Set<String> = []
 
     /// Поля модели, не отмеченные ни применёнными, ни косметическими —
     /// то есть добавленные и забытые. Пусто в норме; непусто значит, что

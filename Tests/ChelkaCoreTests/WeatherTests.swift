@@ -381,3 +381,46 @@ private func weatherRoot() -> URL {
     #expect(weather.snapshot?.celsius == 5)
     #expect(said.count == 1)
 }
+
+// MARK: - Прогноз на ближайшие часы
+
+@Test func decodesUpcomingHoursDroppingTheCurrentOneAndImplausiblePoints() throws {
+    // Владелец попросил показывать не только текущую погоду, а и то, что
+    // впереди. Первый час прогноза дублирует уже показанный текущий — его
+    // не нужно повторять; а откровенный сбой ответа (900°) фильтруется тем
+    // же правилом, что и текущая температура, а не роняет весь прогноз.
+    let url = try #require(Bundle.module.url(forResource: "Fixtures/open-meteo", withExtension: "json"))
+    let snapshot = try #require(WeatherSnapshot.decode(try Data(contentsOf: url), now: now))
+    #expect(snapshot.upcoming.map(\.hour) == ["17:00", "18:00", "19:00"])
+    #expect(snapshot.upcoming.map(\.celsius) == [20.5, 19.1, 18.0])
+    #expect(snapshot.upcoming.map(\.code) == [1, 1, 0])
+}
+
+@Test func missingHourlyBlockIsAnEmptyForecastNotAFailure() {
+    // Прогноз необязателен: старый кэш или ответ без параметра `hourly`
+    // (мало ли кто его уберёт) не должен ронять декодирование целиком —
+    // текущая погода важнее прогноза на потом.
+    let json = #"{"current":{"temperature_2m":5,"apparent_temperature":3,"weather_code":1,"wind_speed_10m":2}}"#
+    let snapshot = try! #require(WeatherSnapshot.decode(Data(json.utf8), now: now))
+    #expect(snapshot.upcoming.isEmpty)
+}
+
+@Test func mismatchedHourlyArrayLengthsAreTruncatedNotCrashed() {
+    // Три массива обязаны идти вместе; рассинхрон (сеть оборвалась посреди
+    // ответа) не должен читать за пределы самого короткого из них.
+    let json = #"""
+    {"current":{"temperature_2m":5,"apparent_temperature":3,"weather_code":1,"wind_speed_10m":2},
+     "hourly":{"time":["2026-08-21T16:00","2026-08-21T17:00","2026-08-21T18:00"],
+               "temperature_2m":[5,6],
+               "weather_code":[1,1,1]}}
+    """#
+    let snapshot = try! #require(WeatherSnapshot.decode(Data(json.utf8), now: now))
+    #expect(snapshot.upcoming.map(\.hour) == ["17:00"])
+}
+
+@Test func requestURLAsksForHourlyForecast() {
+    let url = WeatherProvider.requestURL(for: .defaults).absoluteString
+    #expect(url.contains("hourly=temperature_2m%2Cweather_code")
+            || url.contains("hourly=temperature_2m,weather_code"))
+    #expect(url.contains("forecast_hours=\(Config.Weather.forecastHours)"))
+}
