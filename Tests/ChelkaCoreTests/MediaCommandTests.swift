@@ -34,6 +34,66 @@ import Foundation
     #expect(buffer.appending(Data("снова\n".utf8)) == ["снова"])
 }
 
+/// Обложка приходит в потоке как base64, и картинка на 800 КБ даёт строку под
+/// 1,1 МБ. Целая строка обязана дойти целиком, каким бы длинной она ни была:
+/// порог существует против потока БЕЗ переводов строки, а не против длинных строк.
+@Test func lineBufferDeliversWholeOversizedLine() {
+    var buffer = LineBuffer()
+    let big = String(repeating: "a", count: Config.Media.maxPendingBytes + 1)
+    #expect(buffer.appending(Data("\(big)\n".utf8)) == [big])
+}
+
+@Test func lineBufferKeepsGoodLineThatCameTogetherWithARunawayOne() {
+    // Проверка порога ДО нарезки выбрасывала кусок целиком — вместе с валидной
+    // строкой, пришедшей в нём же.
+    var buffer = LineBuffer()
+    let runaway = String(repeating: "a", count: Config.Media.maxPendingBytes + 1)
+    #expect(buffer.appending(Data("{\"a\":1}\n\(runaway)".utf8)) == ["{\"a\":1}"])
+}
+
+@Test func lineBufferKeepsGoodLineThatCameWithTailOfALongLine() {
+    // Длинная строка двумя куском: с её хвостом терялась и нормальная строка,
+    // пришедшая в том же куске.
+    var buffer = LineBuffer()
+    let half = String(repeating: "a", count: Config.Media.maxPendingBytes / 2 + 1)
+    #expect(buffer.appending(Data(half.utf8)).isEmpty)
+    let lines = buffer.appending(Data("\(half)\n{\"b\":2}\n".utf8))
+    #expect(lines.count == 2)
+    #expect(lines.last == "{\"b\":2}")
+}
+
+@Test func lineBufferComplainsAboutBrokenUtf8InsteadOfDroppingItSilently() {
+    final class Log: @unchecked Sendable { var messages: [String] = [] }
+    let log = Log()
+    var buffer = LineBuffer(warn: { log.messages.append($0) })
+    var chunk = Data([0xFF, 0xFE, 0xFF])
+    chunk.append(Data("\n{\"a\":1}\n".utf8))
+    // Битая строка выброшена, но здоровая рядом с ней доехала, и о потере сказано.
+    #expect(buffer.appending(chunk) == ["{\"a\":1}"])
+    #expect(log.messages.count == 1)
+}
+
+// MARK: - Хвост потока ошибок
+
+@Test func errorTailKeepsOnlyTheLastLines() {
+    var tail = ErrorTail()
+    for i in 1...(Config.Media.errorTailLines + 3) {
+        tail.appending(Data("строка \(i)\n".utf8))
+    }
+    let text = try! #require(tail.text)
+    #expect(!text.contains("строка 1\n"))
+    #expect(text.contains("строка \(Config.Media.errorTailLines + 3)"))
+    #expect(text.components(separatedBy: "строка").count - 1 == Config.Media.errorTailLines)
+}
+
+@Test func errorTailIsNothingWhenAdapterSaidNothing() {
+    var tail = ErrorTail()
+    #expect(tail.text == nil)
+    tail.appending(Data("недописанная строка".utf8))
+    // Недособранная строка — ещё не строка: ждём перевода строки.
+    #expect(tail.text == nil)
+}
+
 @Test func restartPolicyGrowsDelayAndCapsIt() {
     var policy = RestartPolicy.initial
     #expect(policy.delay == Config.Media.restartDelayInitial)
@@ -105,6 +165,16 @@ import Foundation
                                      terminate: { killed.pids.append($0) })
     #expect(swept == [11, 12])
     #expect(killed.pids == [11, 12])
+}
+
+@Test func orphanScanSurvivesDoubleSpacesInsidePath() {
+    // Проверено: если хвост строки `ps` пересклеить через один пробел, корень
+    // проекта с двойным пробелом в имени каталога перестаёт совпадать — и
+    // брошенные процессы не находятся вовсе.
+    let script = "/Users/x/4elka  копия/vendor/mediaremote-adapter/bin/mediaremote-adapter.pl"
+    let framework = "/Users/x/4elka  копия/vendor/build/MediaRemoteAdapter.framework"
+    let ps = "86975     1 /usr/bin/perl \(script) \(framework) stream"
+    #expect(AdapterOrphans.pids(inProcessList: ps, scriptPath: script) == [86975])
 }
 
 @Test func sweepDoesNothingWhenProcessListIsUnavailable() {

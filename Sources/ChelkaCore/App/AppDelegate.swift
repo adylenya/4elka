@@ -39,6 +39,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         controller: settingsController, actions: settingsActions())
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        StartupChores.run()
         guard let screen = NSScreen.main else { return }
         geometry = NotchGeometry.current(screen: screen)
 

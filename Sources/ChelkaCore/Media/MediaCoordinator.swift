@@ -16,7 +16,6 @@ public final class MediaCoordinator: ObservableObject {
     @Published public private(set) var isAvailable = true
 
     private let source: MediaSource
-    private let panelState: () -> PanelState
     private let submitActivity: (ActivityEvent) -> Void
     private var lastTrackIdentity: String?
     private var lastPlaying: Bool?
@@ -28,21 +27,33 @@ public final class MediaCoordinator: ObservableObject {
     /// накопление их всех за долгую работу приложения было бы утечкой.
     private var artworkCache: [String: NSImage] = [:]
 
+    /// Идентичность, для которой обложка уже не разобралась. Без этой памяти
+    /// один и тот же битый мегабайт разбирался бы заново на каждом обновлении
+    /// позиции — то есть раз в секунду у играющего трека.
+    private var failedArtworkIdentity: String?
+
+    /// Разбор картинки — параметром, а не жёстко `NSImage(data:)`: иначе
+    /// «разобрали один раз, а не двадцать» нечем проверить тестом.
+    private let decodeArtwork: (Data) -> NSImage?
+
+    /// Состояния панели здесь нет намеренно: координатор его не читал ни разу,
+    /// а поле, которое только присваивают, следующий читатель принимает за
+    /// работающую логику и строит на нём решения. Кому нужно знать, раскрыта ли
+    /// панель (например, полосе позиции), тот получает это состояние сам.
     public init(source: MediaSource,
-                panelState: @escaping () -> PanelState,
-                submitActivity: @escaping (ActivityEvent) -> Void) {
+                submitActivity: @escaping (ActivityEvent) -> Void,
+                decodeArtwork: @escaping (Data) -> NSImage? = { NSImage(data: $0) }) {
         self.source = source
-        self.panelState = panelState
         self.submitActivity = submitActivity
+        self.decodeArtwork = decodeArtwork
     }
 
     /// Захват слабый. Сильный убрал бы возможность проверить, что освобождённый
     /// координатор перестаёт получать события: цикл ссылок держал бы его вечно.
     /// Владелец обязан хранить координатор сам — тест тоже.
     public func start() {
-        source.onState = { [weak self] s in self?.ingest(s) }
-        source.onUnavailable = { [weak self] in self?.isAvailable = false }
-        source.start()
+        source.start(onState: { [weak self] s in self?.ingest(s) },
+                     onUnavailable: { [weak self] in self?.isAvailable = false })
     }
 
     public func send(_ command: MediaCommand) { source.send(command) }
@@ -80,21 +91,35 @@ public final class MediaCoordinator: ObservableObject {
     private func updateArtworkCache(for new: NowPlaying) {
         guard let identity = new.trackIdentity else {
             artworkCache = [:]
+            failedArtworkIdentity = nil
             return
         }
         guard artworkCache[identity] == nil else { return }
-        guard let data = new.artworkData, let image = NSImage(data: data) else {
+        // Разбор этой обложки уже провалился — второй раз он провалится так же,
+        // а стоит это разбора мегабайта на каждое обновление позиции.
+        guard failedArtworkIdentity != identity else { return }
+        guard let data = new.artworkData else {
             artworkCache = [:]
             return
         }
+        guard let image = decodeArtwork(data) else {
+            NSLog("4elka: обложка трека не разобралась (%d байт), больше не пробую", data.count)
+            artworkCache = [:]
+            failedArtworkIdentity = identity
+            return
+        }
         artworkCache = [identity: image]
+        failedArtworkIdentity = nil
     }
 
     /// `nonisolated`, потому что тест из брифа зовёт её синхронно без
     /// `@MainActor`: чистая функция от параметра, `self` не трогает, поэтому
     /// изоляция всего класса ей не нужна.
     public nonisolated static func activityEvent(for state: NowPlaying) -> ActivityEvent? {
-        guard let title = state.title ?? state.artist else { return nil }
-        return ActivityEvent(kind: .track, title: title, subtitle: state.artist)
+        // Обе строки берутся из `displayLines`: пустая первая строка читается как
+        // поломка, а исполнитель, стоящий одновременно заголовком и
+        // подзаголовком, — как ошибка отрисовки.
+        guard let lines = state.displayLines else { return nil }
+        return ActivityEvent(kind: .track, title: lines.headline, subtitle: lines.subheadline)
     }
 }

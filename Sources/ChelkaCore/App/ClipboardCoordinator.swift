@@ -159,31 +159,48 @@ public final class ClipboardCoordinator: ObservableObject {
     ///
     /// Ошибка ловится по каждому элементу отдельно. Пропавший с диска блоб
     /// выбрасывает из жеста один элемент, а не ломает перетаскивание целиком.
+    ///
+    /// Один элемент даёт СПИСОК путей, а не один путь: запись вида «файлы» —
+    /// это всё выделенное в Finder на момент `⌘C`, и плитка честно подписана
+    /// «файлов: 3». Раньше уезжал только первый, два пропадали молча.
     public func materializeForDrag(_ ids: [UUID]) -> [URL] {
         DragTempCleaner(root: dragRoot).sweep(now: Date())
         let materializer = DragMaterializer(root: dragRoot)
         let selected = ids.compactMap { id in history.items.first { $0.id == id } }
-        return selected.compactMap { Self.materialize($0, with: materializer, blobs: blobs) }
+        return selected.flatMap { Self.materialize($0, with: materializer, blobs: blobs) }
     }
 
     private nonisolated static func materialize(_ item: ClipItem, with materializer: DragMaterializer,
-                                                blobs: BlobStore) -> URL? {
+                                                blobs: BlobStore) -> [URL] {
         do {
             switch item.kind {
             case .text(let s):
-                return try materializer.materialize(text: s, displayName: dragName(for: item))
+                return [try materializer.materialize(text: s, displayName: dragName(for: item))]
             case .image(let ref):
-                return try materializer.materialize(blob: blobs.url(for: ref.blobName),
-                                                    displayName: dragName(for: item))
+                return [try materializer.materialize(blob: blobs.url(for: ref.blobName),
+                                                     displayName: dragName(for: item))]
             case .files(let urls):
                 // Файлы уже лежат на диске под своими именами — копия была бы
                 // и лишней работой, и вторым файлом там, куда его перетащат.
-                return urls.first
+                return existing(of: urls)
             }
         } catch {
             NSLog("4elka: элемент выброшен из перетаскивания: %@", String(describing: error))
-            return nil
+            return []
         }
+    }
+
+    /// Оригинал мог быть удалён уже после копирования. Мёртвый путь в жесте
+    /// уносит файл в никуда молча, поэтому пропавшие отбрасываются здесь же —
+    /// ровно так же, как пропавший блоб, — и о потере говорится в лог.
+    private nonisolated static func existing(of urls: [URL]) -> [URL] {
+        let fm = FileManager.default
+        let byPresence = Dictionary(grouping: urls) { fm.fileExists(atPath: $0.path) }
+        if let gone = byPresence[false], !gone.isEmpty {
+            NSLog("4elka: файлы пропали с диска и в жест не пойдут: %@",
+                  gone.map(\.lastPathComponent).joined(separator: ", "))
+        }
+        return byPresence[true] ?? []
     }
 
     /// Имя, под которым элемент упадёт в Finder. `nonisolated`, потому что это

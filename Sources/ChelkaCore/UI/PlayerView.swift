@@ -18,9 +18,25 @@ import SwiftUI
 /// а не пустое место: пустота выглядит как поломка.
 public struct PlayerView: View {
     @ObservedObject private var coordinator: MediaCoordinator
+    /// Состояние панели нужно ровно за одним: решить, тикать ли полосе позиции.
+    private let panel: PanelState
 
-    public init(coordinator: MediaCoordinator) {
+    public init(coordinator: MediaCoordinator, panel: PanelState) {
         self.coordinator = coordinator
+        self.panel = panel
+    }
+
+    /// Тикает полоса позиции или стоит.
+    ///
+    /// Двигать её надо только когда есть что двигать: на паузе позиция стоит на
+    /// месте, а при закрытой панели её вообще никто не видит. Приложение живёт в
+    /// челке целый день, и таймер два раза в секунду впустую — это батарея.
+    ///
+    /// `nonisolated`, потому что это чистая функция от параметров: `self` она не
+    /// трогает, и изоляция вьюхи на главный актор ей не нужна — иначе тест не
+    /// смог бы позвать её без него.
+    public nonisolated static func shouldTickPosition(isPlaying: Bool, panel: PanelState) -> Bool {
+        isPlaying && panel == .expanded
     }
 
     public var body: some View {
@@ -35,24 +51,39 @@ public struct PlayerView: View {
     }
 
     private var player: some View {
-        TimelineView(.periodic(from: .now, by: Config.Media.positionTickInterval)) { timeline in
-            HStack(spacing: 12) {
-                artworkView
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(coordinator.state.title ?? "")
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    if let artist = coordinator.state.artist {
-                        Text(artist)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    positionBar(at: timeline.date)
+        Group {
+            if Self.shouldTickPosition(isPlaying: coordinator.state.isPlaying, panel: panel) {
+                TimelineView(.periodic(from: .now, by: Config.Media.positionTickInterval)) { timeline in
+                    row(at: timeline.date)
                 }
-                controls
+            } else {
+                // Позиция замерена один раз на отрисовку: стоящую полосу
+                // незачем пересобирать, а закрытую — тем более.
+                row(at: Date())
             }
+        }
+    }
+
+    private func row(at now: Date) -> some View {
+        HStack(spacing: 12) {
+            artworkView
+            VStack(alignment: .leading, spacing: 4) {
+                // Строки берутся из `displayLines`: пустое название не должно
+                // давать пустую первую строку, а исполнитель без названия не
+                // должен дублироваться во второй.
+                Text(coordinator.state.displayLines?.headline ?? "")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                if let artist = coordinator.state.displayLines?.subheadline {
+                    Text(artist)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                positionBar(at: now)
+            }
+            controls
         }
     }
 
