@@ -28,6 +28,33 @@ public struct BatteryAlert: Equatable, Sendable {
     }
 }
 
+/// Пороги, на которых выезжают карточки о заряде.
+///
+/// Отдельный тип, а не чтение `Config` изнутри: человек крутит эти три числа в
+/// настройках, и без параметра раздел «Заряд» в окне настроек был бы мёртвой
+/// крутилкой. Значения из `Config` остаются значениями по умолчанию.
+public struct BatteryThresholds: Equatable, Sendable {
+    public let low: Int
+    public let high: Int
+    /// «Заряжен». В настройках его нет: сотня — это сотня.
+    public let full: Int
+    /// Насколько заряд должен отойти от порога, чтобы правило снова взвелось.
+    public let hysteresis: Int
+
+    public init(low: Int, high: Int, full: Int, hysteresis: Int) {
+        self.low = low
+        self.high = high
+        self.full = full
+        self.hysteresis = hysteresis
+    }
+
+    public static let defaults = BatteryThresholds(
+        low: Config.Battery.lowThreshold,
+        high: Config.Battery.highThreshold,
+        full: Config.Battery.fullThreshold,
+        hysteresis: Config.Battery.hysteresis)
+}
+
 /// Срабатывание на пересечении порога, а не по условию «ниже порога»:
 /// иначе на 19% карточка выезжала бы при каждом опросе, то есть раз в минуту.
 public struct BatteryAlerts: Equatable, Sendable {
@@ -42,10 +69,12 @@ public struct BatteryAlerts: Equatable, Sendable {
     public init() { armed = [:] }
     private init(armed: [String: Armed]) { self.armed = armed }
 
-    public func evaluating(_ devices: [DeviceCharge]) -> (BatteryAlerts, [BatteryAlert]) {
-        let low = Config.Battery.lowThreshold
-        let high = Config.Battery.highThreshold
-        let gap = Config.Battery.hysteresis
+    public func evaluating(_ devices: [DeviceCharge],
+                           thresholds: BatteryThresholds = .defaults)
+        -> (BatteryAlerts, [BatteryAlert]) {
+        let low = thresholds.low
+        let high = thresholds.high
+        let gap = thresholds.hysteresis
 
         var nextArmed: [String: Armed] = [:]
         var fired: [BatteryAlert] = []
@@ -69,7 +98,7 @@ public struct BatteryAlerts: Equatable, Sendable {
                 state.highArmed = true
             }
 
-            let full = Config.Battery.fullThreshold
+            let full = thresholds.full
             if device.percent >= full, state.fullArmed {
                 fired.append(BatteryAlert(deviceName: device.name, percent: full, level: .full))
                 state.fullArmed = false

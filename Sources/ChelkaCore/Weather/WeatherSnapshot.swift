@@ -39,9 +39,13 @@ public struct WeatherSnapshot: Equatable, Codable, Sendable {
     /// «14:32» у трёхдневной погоды читается как сегодняшняя, если сейчас
     /// примерно тот же час — то есть это тихая ложь, а не пометка. Отдельная
     /// чистая функция, потому что именно её и надо проверять тестом.
-    public func ageDescription(now: Date) -> String? {
+    ///
+    /// Порог устаревания приходит параметром: человек крутит его в настройках,
+    /// а значение из `Config` — только значение по умолчанию.
+    public func ageDescription(now: Date,
+                               staleAfter: TimeInterval = Config.Weather.staleAfter) -> String? {
         let seconds = now.timeIntervalSince(observedAt)
-        guard seconds >= Config.Weather.staleAfter else { return nil }
+        guard seconds >= staleAfter else { return nil }
         let hours = Int(seconds / 3600)
         if hours < 24 { return "\(hours) ч назад" }
         return "\(hours / 24) дн назад"

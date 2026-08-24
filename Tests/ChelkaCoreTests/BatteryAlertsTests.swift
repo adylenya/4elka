@@ -116,3 +116,38 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
     #expect(alert.activityEvent.kind == .battery)
     #expect(alert.activityEvent.title.contains("Наушники"))
 }
+
+// MARK: - Пороги из настроек
+
+/// Раздел «Заряд» в окне настроек обязан что-то менять. Раньше правила брали
+/// пороги прямо из `Config`, и три крутилки в настройках только сохранялись в
+/// файл, ни на что не влияя.
+@Test func thresholdsFromSettingsDecideWhenTheCardComesOut() {
+    var settings = Settings.defaults
+    settings.batteryLow = 50
+    let alerts = BatteryAlerts()
+    // Сорок процентов при пороге по умолчанию (20) — ещё не повод.
+    #expect(alerts.evaluating([dev("Наушники", 40)]).1.isEmpty)
+    // При пороге 50 из настроек — уже повод.
+    let fired = alerts.evaluating([dev("Наушники", 40)],
+                                  thresholds: settings.batteryThresholds).1
+    #expect(fired.count == 1)
+    #expect(fired.first?.level == .low)
+}
+
+/// Гистерезис из настроек решает, когда правило взводится заново: с большим
+/// зазором тот же дребезг заряда не даёт второй карточки.
+@Test func hysteresisFromSettingsDecidesWhenTheRuleRearms() {
+    var settings = Settings.defaults
+    settings.batteryLow = 20
+    settings.batteryHysteresis = 20
+    let thresholds = settings.batteryThresholds
+    var alerts = BatteryAlerts()
+    var fired: [BatteryAlert]
+    (alerts, fired) = alerts.evaluating([dev("Наушники", 19)], thresholds: thresholds)
+    #expect(fired.count == 1)
+    // 35 < 20 + 20 — правило ещё не взведено, значит второй карточки не будет.
+    (alerts, _) = alerts.evaluating([dev("Наушники", 35)], thresholds: thresholds)
+    (_, fired) = alerts.evaluating([dev("Наушники", 19)], thresholds: thresholds)
+    #expect(fired.isEmpty)
+}
