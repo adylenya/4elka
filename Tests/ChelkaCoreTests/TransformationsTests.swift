@@ -85,3 +85,20 @@ import Foundation
     #expect(PlainText.strip(nil, fallback: "запас") == "запас")
     #expect(PlainText.strip(Data([0xFF, 0xFE]), fallback: "запас") == "запас")
 }
+
+@Test func timestampPinsItsLocaleSoForeignCalendarCannotShiftTheYear() {
+    // Формат фиксированный, значит и локаль обязана быть фиксированной. Проект
+    // эту ловушку уже знает и лечит в двух других местах, а здесь она осталась.
+    //
+    // Первые две проверки доказывают, что механизм вообще важен: с буддийским
+    // календарём тот же штамп даёт 2568 год вместо 2025. Без них третья проверка
+    // была бы утверждением ни о чём.
+    let buddhist = Locale(identifier: "th_TH@calendar=buddhist")
+    #expect(Transformations.timestampText(1_755_777_600, locale: buddhist).hasPrefix("2568-"))
+    #expect(Transformations.timestampText(1_755_777_600,
+                                          locale: Transformations.timestampLocale)
+            .hasPrefix("2025-"))
+    // А это — сама починка: вызывающая сторона обязана брать фиксированную локаль,
+    // а не системную. Регион «Таиланд» в системных настройках иначе превратит год.
+    #expect(Transformations.timestampLocale.identifier == "en_US_POSIX")
+}

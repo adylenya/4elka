@@ -84,6 +84,23 @@ public enum Transformations {
     /// не набирают: 12 знаков в секундах — это год 33 000-й.
     private static let millisecondDigitThreshold = 12
 
+    /// Локаль фиксированная, потому что фиксирован формат. С системной локалью
+    /// регион «Таиланд» (буддийский календарь) превратил бы 2025 год в 2568 —
+    /// и человек получил бы дату, которой не было. Проект эту ловушку уже знает
+    /// и лечит так же в двух других местах.
+    static let timestampLocale = Locale(identifier: "en_US_POSIX")
+
+    /// Вынесено отдельно и с локалью параметром, чтобы тест мог показать, что
+    /// локаль правда влияет на результат: проверка «локаль фиксирована» без
+    /// такого показа была бы утверждением ни о чём.
+    static func timestampText(_ seconds: Double, locale: Locale) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.timeZone = TimeZone(identifier: Config.timezone)
+        formatter.locale = locale
+        return formatter.string(from: Date(timeIntervalSince1970: seconds))
+    }
+
     private static func timestamp(_ input: String) -> String? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let raw = Double(trimmed), trimmed.allSatisfy({ $0.isNumber || $0 == "-" }) else {
@@ -91,9 +108,6 @@ public enum Transformations {
         }
         // Длинное число — миллисекунды: иначе 1755777600000 превратится в 55-й век.
         let seconds = trimmed.count >= millisecondDigitThreshold ? raw / 1000 : raw
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        formatter.timeZone = TimeZone(identifier: Config.timezone)
-        return formatter.string(from: Date(timeIntervalSince1970: seconds))
+        return timestampText(seconds, locale: timestampLocale)
     }
 }
