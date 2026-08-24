@@ -17,8 +17,13 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     // Аварийный выход: единственный способ управлять и выключить приложение,
     // раз у него нет иконки в доке.
     private var statusItem: StatusItemController?
-    /// Глобальное сочетание клавиш. Создаётся при старте, снимается при выходе.
-    private var panelHotkey: GlobalHotkey?
+    /// Глобальное сочетание клавиш: ставится при старте, переставляется при
+    /// смене настройки, снимается при выходе. Отказ регистрации хранится там
+    /// же и уходит в окно настроек — в системном журнале человек его не
+    /// увидит, у приложения нет ни иконки в доке, ни уведомлений.
+    private lazy var hotkeyRegistry = HotkeyRegistry(handler: { [weak self] in
+        self?.apply { $0.clicked() }
+    })
 
     // Единая точка отправки карточек на всё приложение: буфер (ниже), плеер
     // (Task 15) и батареи (Task 18) пишут сюда же, а не каждый в свою очередь —
@@ -73,7 +78,9 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
 
         // Хоткей делает ровно то же, что клик по челке и пункт «Показать
         // панель»: раскрывает панель, повторное нажатие складывает её.
-        panelHotkey = GlobalHotkey.installed { [weak self] in self?.apply { $0.clicked() } }
+        // Сочетание — из настроек, а не по умолчанию: иначе выбор в окне
+        // настроек сохранялся бы на диск и не делал ничего.
+        hotkeyRegistry.apply(settingsController.settings.hotkeyCombo)
 
         // Состояние применяется до первого показа окна. Раньше панель
         // поднималась на передний план при скрытом состоянии, и на машине без
@@ -97,8 +104,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     /// процессов при старте моста (`AdapterOrphans`) — страховка на случай
     /// `kill -9`, а не замена вежливому завершению.
     public func applicationWillTerminate(_ notification: Notification) {
-        panelHotkey?.unregister()
-        panelHotkey = nil
+        hotkeyRegistry.stop()
         activityTimer?.invalidate()
         activityTimer = nil
         pasteboardWatcher?.stop()
@@ -373,6 +379,11 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     /// означало бы «сколько хранить» вступает в силу неизвестно когда.
     private func settingsChanged(_ settings: Settings) {
         clipboardCoordinator?.applyQuotas(settings.historyQuotas)
+        // Сочетание клавиш: прежняя регистрация снимается, новая ставится.
+        // Регистрация живёт в системе, поэтому не снять прежнюю — значит
+        // оставить висеть сочетание, которого человек уже не выбирал.
+        // Неизменившееся сочетание распорядитель не трогает сам.
+        hotkeyRegistry.apply(settings.hotkeyCombo)
         // Интервал обновления погоды живёт в уже заведённом таймере: без этого
         // «раз в минуту» вступало бы в силу только после перезапуска.
         services?.settingsChanged()
@@ -383,6 +394,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private func settingsActions() -> SettingsActions {
         SettingsActions(
             clearHistory: { [weak self] in self?.clipboardCoordinator?.clearHistory() },
+            hotkeyFailure: { [weak self] in self?.hotkeyRegistry.failure },
             isLaunchAtLoginEnabled: { SMAppService.mainApp.status == .enabled },
             toggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
             revealDataFolder: {

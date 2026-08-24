@@ -42,11 +42,11 @@ import Testing
 @MainActor
 @Test func registrationSucceedsAndCanBeRepeatedAfterUnregister() {
     let first = GlobalHotkey(combo: HotkeyCombo.defaultToggle, handler: {})
-    #expect(first.register())
+    #expect(first.register() == nil)
     first.unregister()
 
     let second = GlobalHotkey(combo: HotkeyCombo.defaultToggle, handler: {})
-    #expect(second.register())
+    #expect(second.register() == nil)
     second.unregister()
 }
 
@@ -55,9 +55,10 @@ import Testing
     let hits = Counter()
     let a = GlobalHotkey(combo: HotkeyCombo.defaultToggle) { hits.bump("a") }
     let b = GlobalHotkey(combo: HotkeyCombo.defaultToggle) { hits.bump("b") }
-    #expect(a.register())
-    // Второй регистратор на ту же комбинацию должен честно вернуть false.
-    #expect(!b.register())
+    #expect(a.register() == nil)
+    // Второй регистратор на ту же комбинацию обязан назвать причину, а не
+    // просто отказать: «занято» и «я уже зарегистрирован» — разные беды.
+    #expect(b.register()?.reason == .comboTaken)
     #expect(b.identifier == nil)
 
     // И не отнять сочетание у первого: неудачная попытка ничего не ломает.
@@ -82,12 +83,15 @@ import Testing
     // тем же путём, которым его зовёт обработчик Carbon.
     let hits = Counter()
     let toggle = GlobalHotkey(combo: HotkeyCombo.defaultToggle) { hits.bump("toggle") }
+    // Второе сочетание берём из того же семейства ⌃⌥, что и предлагаемые в
+    // настройках: ⌘⇧C, стоявшее здесь раньше, — пункт Finder «Компьютер», и
+    // отбирать его даже на время теста незачем.
     let other = GlobalHotkey(combo: HotkeyCombo(keyCode: UInt32(kVK_ANSI_C),
-                                                modifiers: UInt32(cmdKey | shiftKey))) {
+                                                modifiers: UInt32(controlKey | optionKey))) {
         hits.bump("other")
     }
-    #expect(toggle.register())
-    #expect(other.register())
+    #expect(toggle.register() == nil)
+    #expect(other.register() == nil)
     defer {
         toggle.unregister()
         other.unregister()
@@ -107,7 +111,7 @@ import Testing
 @Test func pressAfterUnregisterReachesNobody() {
     let hits = Counter()
     let hotkey = GlobalHotkey(combo: HotkeyCombo.defaultToggle) { hits.bump("toggle") }
-    #expect(hotkey.register())
+    #expect(hotkey.register() == nil)
     guard let identifier = hotkey.identifier else {
         Issue.record("регистрация не выдала идентификатор")
         return
