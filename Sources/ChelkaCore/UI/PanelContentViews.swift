@@ -56,7 +56,13 @@ public struct NotchToppedPanel<Content: View>: View {
 
     public var body: some View {
         ZStack(alignment: .top) {
-            GlassPanel { content }
+            // Стекло само отступает на `glassInset`, чтобы его скруглённый
+            // угол спрятался за планкой, — но планка выше этого отступа на
+            // `glassContentInset`, и ровно на эту величину содержимое обязано
+            // отступить ещё раз, иначе его верх рисуется в полосе, которую
+            // планка всё ещё перекрывает. Замерено на живом экране 24.08:
+            // без этой добавки обрезался верх плеера (обложка, заголовок).
+            GlassPanel { content.padding(.top, contentInset) }
                 .padding(.top, glassInset)
             Color.black
                 .frame(height: barHeight)
@@ -69,9 +75,8 @@ public struct NotchToppedPanel<Content: View>: View {
         geometry.hasPhysicalNotch ? geometry.rect.height : 0
     }
 
-    private var glassInset: CGFloat {
-        max(0, barHeight - Config.Notch.cornerRadius)
-    }
+    private var glassInset: CGFloat { NotchLayout.glassInset(geometry: geometry) }
+    private var contentInset: CGFloat { NotchLayout.glassContentInset(geometry: geometry) }
 }
 
 /// Тонкая подсказка, выезжающая из-под челки при наведении, и то же самое в

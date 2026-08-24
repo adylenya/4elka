@@ -111,3 +111,23 @@ private let window = CGSize(width: 640, height: 378)
     #expect(Config.Activity.cardContentMinHeight
             == Config.Activity.cardThumbnailSide + Config.Activity.cardVerticalPadding * 2)
 }
+
+@Test func glassContentInsetClearsWhatTheBarStillCovers() {
+    // Замерено на живом экране 24.08: стекло раскрытой панели отступает от
+    // верха ровно на «высота планки минус скругление стекла» (22 = 38 − 16),
+    // чтобы скруглённый угол стекла спрятался ЗА планкой. Но планка при этом
+    // высотой 38, а не 22 — и верх содержимого (обложка, заголовок трека),
+    // если рисовать его прямо от края стекла, попадает в те самые 16 точек,
+    // которые планка ещё перекрывает сверху. Итог: верхние строки плеера
+    // визуально обрезаны собственной чёрной планкой приложения.
+    let glassInset = NotchLayout.glassInset(geometry: measured)
+    let contentInset = NotchLayout.glassContentInset(geometry: measured)
+    #expect(glassInset + contentInset == measured.rect.height)
+}
+
+@Test func glassContentInsetIsZeroWithoutAPhysicalNotch() {
+    let plain = NotchGeometry(rect: CGRect(x: 850, y: 1048, width: 220, height: 32),
+                              hasPhysicalNotch: false)
+    #expect(NotchLayout.glassInset(geometry: plain) == 0)
+    #expect(NotchLayout.glassContentInset(geometry: plain) == 0)
+}
