@@ -126,10 +126,69 @@ private func touch(_ url: URL) {
     #expect(index.load().items.first?.name == "Отчёт за август 🎉.pdf")
 }
 
-@Test func brokenShelfFileReadsAsEmptyShelf() {
-    let url = shelfDir().appendingPathComponent("shelf.json")
-    try? Data("{ это не json".utf8).write(to: url)
+/// Битый файл полки не имеет права молча превратиться в пустую полку: первая же
+/// запись затрёт его, и файлы, положенные руками, исчезнут навсегда. Он обязан
+/// лечь в сторону — ровно как испорченный индекс истории.
+@Test func brokenShelfFileIsSetAsideNotSilentlyDropped() throws {
+    let dir = shelfDir()
+    let url = dir.appendingPathComponent("shelf.json")
+    try Data("{ это не json".utf8).write(to: url)
+
     #expect(ShelfIndex(fileURL: url).load().items.isEmpty)
+
+    #expect(FileManager.default.fileExists(atPath: url.path) == false)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        .contains { $0.hasPrefix("shelf.json.broken-") })
+}
+
+/// Недописанный файл — обрезанный ровно посередине — это то, как выглядит обрыв
+/// записи: кончилось место, потеря питания. Он обязан лечь в сторону целиком,
+/// до последнего байта: только из этих байтов человек и достанет обратно имя
+/// важного файла.
+@Test func truncatedShelfFileIsSetAsideWithItsBytesIntact() throws {
+    let dir = shelfDir()
+    let file = dir.appendingPathComponent("shelf.json")
+    let index = ShelfIndex(fileURL: file)
+    let report = dir.appendingPathComponent("важный-отчёт.pdf")
+    let other = dir.appendingPathComponent("прочее.pdf")
+    touch(report)
+    touch(other)
+    // Важный файл брошен последним, значит лежит в начале файла и попадает
+    // в уцелевшую половину — именно за ним человек и пойдёт в отложенное.
+    try index.save(ShelfStore().adding([other], now: now)
+        .adding([report], now: now.addingTimeInterval(1)))
+    let whole = try Data(contentsOf: file)
+    let half = whole.prefix(whole.count / 2)
+    try Data(half).write(to: file)
+
+    #expect(index.load().items.isEmpty)
+
+    #expect(FileManager.default.fileExists(atPath: file.path) == false)
+    let setAside = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        .filter { $0.hasPrefix("shelf.json.broken-") }
+    #expect(setAside.count == 1)
+    let kept = try #require(setAside.first)
+    let bytes = try Data(contentsOf: dir.appendingPathComponent(kept))
+    #expect(bytes == Data(half))
+    // Имя файла, за которым человек и пойдёт в отложенное, обязано в нём быть.
+    // В JSON оно лежит внутри `file://`-ссылки, то есть в процентной записи.
+    let needle = report.lastPathComponent
+        .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+    #expect(String(decoding: bytes, as: UTF8.self).contains(needle))
+}
+
+/// Тот же путь ждёт будущую смену схемы `ShelfItem`: разбор упадёт, и без
+/// откладывания в сторону полка пропала бы при обновлении приложения.
+@Test func shelfFileOfForeignSchemaIsSetAside() throws {
+    let dir = shelfDir()
+    let file = dir.appendingPathComponent("shelf.json")
+    try Data(#"[{"поле-из-будущего": 1}]"#.utf8).write(to: file)
+
+    #expect(ShelfIndex(fileURL: file).load().items.isEmpty)
+
+    #expect(FileManager.default.fileExists(atPath: file.path) == false)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        .contains { $0.hasPrefix("shelf.json.broken-") })
 }
 
 @Test func missingShelfFileReadsAsEmptyShelf() {

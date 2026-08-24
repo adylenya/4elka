@@ -96,7 +96,7 @@ private func root() -> URL {
 /// Имя отложенного файла — чистая функция: исходное имя остаётся целиком, чтобы
 /// человек нашёл файл глазами, а метка времени говорит, когда индекс сломался.
 @Test func brokenNameKeepsOriginalNameAndCarriesTimestamp() {
-    let name = HistoryIndex.brokenName(for: "index.json", at: Date(timeIntervalSince1970: 0))
+    let name = StateFile.brokenName(for: "index.json", at: Date(timeIntervalSince1970: 0))
     #expect(name.hasPrefix("index.json.broken-"))
     #expect(name == "index.json.broken-1970-01-01-060000")
 }
