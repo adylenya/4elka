@@ -1,10 +1,10 @@
 /// Видимое состояние панели над челкой.
-public enum PanelState: Equatable {
+public enum PanelState: Equatable, Sendable, CaseIterable {
     case hidden, peek, activity, expanded
 }
 
 /// Иммутабельный автомат: каждый переход возвращает новый экземпляр.
-public struct PanelStateMachine: Equatable {
+public struct PanelStateMachine: Equatable, Sendable {
     public let state: PanelState
 
     public init(state: PanelState = .hidden) { self.state = state }

@@ -90,11 +90,31 @@ public enum Config {
         public static let cardExtraWidth: CGFloat = 260
         /// Минимальная ширина карточки на экранах без физической челки.
         public static let cardMinWidth: CGFloat = 320
+        /// Сторона миниатюры и значка в карточке.
+        public static let cardThumbnailSide: CGFloat = 34
+        public static let cardThumbnailCornerRadius: CGFloat = 6
+        /// Зазор между миниатюрой и текстом.
+        public static let cardSpacing: CGFloat = 10
+        /// Зазор между заголовком карточки и подписью под ним.
+        public static let cardTextSpacing: CGFloat = 1
+        public static let cardHorizontalPadding: CGFloat = 12
+        public static let cardVerticalPadding: CGFloat = 8
+        public static let cardTitleFontSize: CGFloat = 12
+        public static let cardSubtitleFontSize: CGFloat = 10
+        public static let cardIconFontSize: CGFloat = 16
+        /// Минимум, ниже которого содержимое карточки обрезается: миниатюра
+        /// плюс вертикальные отступы. Выведен из тех же констант, которыми
+        /// рисует вью, а не перепечатан числом: поднимешь миниатюру — минимум
+        /// поднимется сам, и тест это увидит.
+        public static let cardContentMinHeight =
+            cardThumbnailSide + cardVerticalPadding * 2
+        /// Запас над минимумом. Раньше высота содержимого стояла ровно на
+        /// вычисленном минимуме, и любая правка рисования обрезала карточку.
+        public static let cardBodySlack: CGFloat = 6
         /// Высота содержимого карточки — полосы ПОД челкой, а не всей фигуры.
         /// Общая высота считается в `NotchLayout.cardHeight`: к этому числу
-        /// прибавляется высота самой челки. Минимум диктует рисование:
-        /// миниатюра 34 точки плюс отступы по 8.
-        public static let cardBodyHeight: CGFloat = 50
+        /// прибавляется высота самой челки.
+        public static let cardBodyHeight = cardContentMinHeight + cardBodySlack
     }
 
     public enum Weather {
@@ -203,7 +223,26 @@ public enum Config {
         /// Ширина плашки на экранах без челки.
         public static let fallbackWidth: CGFloat = 220
         public static let fallbackHeight: CGFloat = 32
+        /// Размер СОДЕРЖИМОГО раскрытой панели — того, что лежит ниже челки.
+        /// Полную высоту окна считает `PanelFrames`: к этому числу прибавляется
+        /// высота челки. Раньше это была полная высота, вырез съедал из неё
+        /// 38 точек, и сетку истории обрезало нижним краем.
         public static let expandedSize = CGSize(width: 640, height: 340)
+        /// Высота подсказки, выезжающей из-под челки при наведении. Раньше
+        /// наведение просило размером ровно вырез — тело выходило нулевой
+        /// высоты, и состояние наведения не показывало ничего.
+        public static let peekBodyHeight: CGFloat = 12
+        /// Ширина и высота самой подсказки внутри этой полосы — короткая
+        /// чёрточка, продолжающая челку вниз.
+        public static let peekHintSize = CGSize(width: 36, height: 4)
+        /// Насколько фигура обязана быть ниже челки, чтобы её было видно.
+        /// Раньше здесь стояла голая единица в расчёте высоты.
+        public static let minFigureOvershoot: CGFloat = 1
+        /// Насколько уровень окна зоны-триггера выше уровня панели. Зона обязана
+        /// лежать строго выше: панель поднимается на передний план на каждом
+        /// переходе и иначе накрывает зону собой, съедая наведение и клик —
+        /// то есть главный жест приложения не работает вовсе.
+        public static let triggerLevelOffset = 1
         /// Скругление стеклянных поверхностей.
         public static let cornerRadius: CGFloat = 16
         /// Расстояние, на котором соседнее стекло сливается в одно.

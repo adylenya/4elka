@@ -2,17 +2,21 @@ import AppKit
 
 /// Действия, доступные из меню иконки в строке меню.
 public enum StatusMenuAction: Equatable, Sendable, CaseIterable {
-    case showPanel, openSettings, toggleLaunchAtLogin, quit
+    case showPanel, hidePanel, openSettings, toggleLaunchAtLogin, quit
 }
 
 /// Состав и подписи меню — чистая функция без окон и системных вызовов.
 /// Это единственная часть, которую можно проверить тестом, и именно на ней
 /// держится гарантия «выход есть всегда».
 public enum StatusMenu {
-    /// Пункты меню для текущего состояния.
-    public static func items(panel: PanelState, launchesAtLogin: Bool) -> [StatusMenuAction] {
+    /// Пункты меню для текущего состояния. Про автозапуск здесь ничего не
+    /// нужно: он влияет только на подпись пункта, а не на состав меню.
+    public static func items(panel: PanelState) -> [StatusMenuAction] {
         var items: [StatusMenuAction] = []
-        if panel != .expanded { items.append(.showPanel) }
+        // Раскрытая панель предлагает обратное действие, а не прячет пункт
+        // совсем: раньше при раскрытой панели меню не предлагало ничего, и
+        // единственным выходом оставалось выключить приложение.
+        items.append(panel == .expanded ? .hidePanel : .showPanel)
         items.append(.openSettings)
         items.append(.toggleLaunchAtLogin)
         // Выход есть всегда и при любом состоянии: это аварийный выход,
@@ -24,6 +28,7 @@ public enum StatusMenu {
     public static func title(for action: StatusMenuAction, launchesAtLogin: Bool) -> String {
         switch action {
         case .showPanel: return "Показать панель"
+        case .hidePanel: return "Скрыть панель"
         case .openSettings: return "Настройки…"
         case .toggleLaunchAtLogin:
             // Подпись про действие, которое произойдёт по клику, а не про
@@ -53,7 +58,7 @@ public final class StatusItemController {
 
     public func refresh(panel: PanelState, launchesAtLogin: Bool) {
         let menu = NSMenu()
-        for action in StatusMenu.items(panel: panel, launchesAtLogin: launchesAtLogin) {
+        for action in StatusMenu.items(panel: panel) {
             let entry = NSMenuItem(
                 title: StatusMenu.title(for: action, launchesAtLogin: launchesAtLogin),
                 action: #selector(handle(_:)), keyEquivalent: "")

@@ -9,8 +9,11 @@ import AppKit
 /// Панель при этом не забирает активацию у чужого приложения: за это
 /// отвечают стиль `.nonactivatingPanel` здесь и `setActivationPolicy(.accessory)`
 /// в точке входа приложения.
+///
+/// Рамку окно себе не считает: её считает `PanelFrames`, а ставит
+/// `PanelPresenter`. Раньше расчёт жил тут же и разошёлся с раскладкой.
 @MainActor
-public final class NotchPanel: NSPanel {
+public final class NotchPanel: NSPanel, PanelSurface {
     /// Разрешение брать клавиатуру нужно ровно в одном состоянии — раскрытом,
     /// где есть поле поиска. Раньше оно выдавалось всегда, и выезжающая карточка
     /// перехватывала набор текста у человека, который в этот момент печатал.
@@ -40,19 +43,31 @@ public final class NotchPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
     }
 
-    /// Разрешить или запретить окну становиться клавиатурным. Если разрешение
-    /// снимается, а окно уже успело стать key — отдаём фокус немедленно, а не
-    /// ждём следующего клика в чужом приложении.
-    public func setKeyboardAllowed(_ allowed: Bool) {
-        keyboardAllowed = allowed
-        if !allowed, isKeyWindow { resignKey() }
-    }
+    // MARK: - PanelSurface
 
-    /// Панель растёт вниз от верхнего края экрана, поэтому меняем и origin, и size.
-    public func resize(to size: CGSize, geometry: NotchGeometry) {
-        let frame = CGRect(x: geometry.rect.midX - size.width / 2,
-                          y: geometry.rect.maxY - size.height,
-                          width: size.width, height: size.height)
+    public func place(at frame: CGRect) {
         setFrame(frame, display: true, animate: false)
     }
+
+    public func show() { orderFrontRegardless() }
+
+    public func hide() { orderOut(nil) }
+
+    /// Разрешить или запретить окну становиться клавиатурным.
+    ///
+    /// Если разрешение снимается, а окно уже успело стать key — окно уходит с
+    /// экрана. `resignKey()` для этого не годится: он только рассылает
+    /// уведомление и клавиатурный статус никому не передаёт, то есть окно
+    /// продолжает перехватывать набор текста. Реально отпустить клавиатуру
+    /// умеет лишь уход окна с экрана — AppKit сам выбирает следующее key-окно.
+    /// Показать окно снова, если оно нужно, — дело `PanelPresenter`: он зовёт
+    /// `show()` после `allowKeyboard(_:)`, и окно возвращается уже без клавиатуры.
+    public func allowKeyboard(_ allowed: Bool) {
+        keyboardAllowed = allowed
+        if !allowed, isKeyWindow { orderOut(nil) }
+    }
+
+    public func takeKeyboard() { makeKey() }
+
+    public func present(_ content: NSView) { contentView = content }
 }

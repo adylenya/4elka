@@ -21,7 +21,8 @@ public struct NotchLayout: Equatable, Sendable {
         // фигура не расширяет челку, а просто висит под ней.
         let minWidth = geometry.rect.width + Config.Notch.wingWidth * 2
         let width = max(size.width, minWidth)
-        let height = max(size.height, geometry.rect.height + 1)
+        let height = max(size.height,
+                         geometry.rect.height + Config.Notch.minFigureOvershoot)
         return CGRect(x: geometry.rect.midX - width / 2,
                       y: geometry.rect.maxY - height,
                       width: width,

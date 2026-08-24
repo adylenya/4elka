@@ -2,13 +2,12 @@ import Testing
 import AppKit
 @testable import ChelkaCore
 
-// Свойство, а не глобальная константа: `NotchGeometry` не Sendable (это тип
-// Task 2, не в объёме этой задачи), а глобальный `let` такого типа не
-// проходит проверку конкурентности Swift 6. Вычисляемое свойство не хранит
-// общего состояния и эту проверку не запускает.
-private var measured: NotchGeometry {
-    NotchGeometry(rect: CGRect(x: 918, y: 1291, width: 220, height: 38), hasPhysicalNotch: true)
-}
+private let measured = NotchGeometry(
+    rect: CGRect(x: 918, y: 1291, width: 220, height: 38), hasPhysicalNotch: true)
+
+/// Размер окна, а не размер содержимого: `inPanel` проверяется на произвольной
+/// рамке, а рамки состояний считает `PanelFrames`.
+private let window = CGSize(width: 640, height: 378)
 
 @Test func cardContinuesTheNotchInsteadOfHangingBelowIt() {
     // Фигура закреплена у верха экрана и продолжает челку, а не висит под ней.
@@ -27,27 +26,29 @@ private var measured: NotchGeometry {
 }
 
 @Test func cardIsAtLeastAsTallAsTheNotch() {
-    // Фигура ниже челки бессмысленна: ей нечего продолжать.
+    // Фигура ниже челки бессмысленна: ей нечего продолжать. Проверяем не
+    // «строго больше» — тело в одну точку такую проверку устраивало, — а что
+    // выступ ровно тот, который назван константой.
     let squat = NotchLayout.cardFrame(size: CGSize(width: 320, height: 5), geometry: measured)
-    #expect(squat.height > measured.rect.height)
+    #expect(squat.height == measured.rect.height + Config.Notch.minFigureOvershoot)
+    #expect(Config.Notch.minFigureOvershoot > 0)
 }
 
 @Test func panelBodyStartsBelowTheNotch() {
-    let layout = NotchLayout.inPanel(size: Config.Notch.expandedSize, geometry: measured)
+    let layout = NotchLayout.inPanel(size: window, geometry: measured)
     // Тело занимает всё, кроме верхней полосы высотой челки.
-    #expect(layout.body.height == Config.Notch.expandedSize.height - measured.rect.height)
+    #expect(layout.body.height == window.height - measured.rect.height)
     #expect(layout.body.minY == 0)
-    #expect(layout.body.width == Config.Notch.expandedSize.width)
+    #expect(layout.body.width == window.width)
 }
 
 @Test func stripsSitBesideTheNotchAndNeverUnderIt() {
-    let size = Config.Notch.expandedSize
-    let layout = NotchLayout.inPanel(size: size, geometry: measured)
+    let layout = NotchLayout.inPanel(size: window, geometry: measured)
     // Полосы в верхних 38 точках, слева и справа от челки, и не пересекают её.
     #expect(layout.leftStrip.height == measured.rect.height)
     #expect(layout.rightStrip.height == measured.rect.height)
-    #expect(layout.leftStrip.maxY == size.height)
-    let notchInPanel = (size.width - measured.rect.width) / 2
+    #expect(layout.leftStrip.maxY == window.height)
+    let notchInPanel = (window.width - measured.rect.width) / 2
     #expect(abs(layout.leftStrip.width - notchInPanel) < 0.001)
     #expect(abs(layout.rightStrip.width - notchInPanel) < 0.001)
     #expect(layout.leftStrip.maxX <= layout.rightStrip.minX)
@@ -65,10 +66,10 @@ private var measured: NotchGeometry {
 @Test func withoutPhysicalNotchThereIsNoStripAndBodyIsWhole() {
     let plain = NotchGeometry(rect: CGRect(x: 850, y: 1048, width: 220, height: 32),
                               hasPhysicalNotch: false)
-    let layout = NotchLayout.inPanel(size: Config.Notch.expandedSize, geometry: plain)
+    let layout = NotchLayout.inPanel(size: window, geometry: plain)
     #expect(layout.leftStrip.isEmpty)
     #expect(layout.rightStrip.isEmpty)
-    #expect(layout.body.height == Config.Notch.expandedSize.height)
+    #expect(layout.body.height == window.height)
 }
 
 @Test func panelTakesKeyboardOnlyWhenExpanded() {
@@ -101,8 +102,12 @@ private var measured: NotchGeometry {
     #expect(NotchLayout.cardHeight(contentHeight: 50, geometry: plain) == 50)
 }
 
-@Test func activityContentIsTallEnoughForIconAndTwoLines() {
-    // Карточка рисует миниатюру 34 точки и вертикальные отступы по 8 —
-    // ниже этого содержимое обрезается независимо от раскладки.
-    #expect(Config.Activity.cardBodyHeight >= 34 + 8 * 2)
+@Test func activityContentIsTallEnoughForIconAndTwoLinesWithRoomToSpare() {
+    // Раньше этот тест перепечатывал литералы из вью (34 и 8) и её не защищал:
+    // поднимешь миниатюру — тест зелёный, а содержимое снова обрезано. Теперь
+    // минимум выведен из тех же констант, которыми рисует вью, и над ним
+    // требуется запас.
+    #expect(Config.Activity.cardBodyHeight > Config.Activity.cardContentMinHeight)
+    #expect(Config.Activity.cardContentMinHeight
+            == Config.Activity.cardThumbnailSide + Config.Activity.cardVerticalPadding * 2)
 }

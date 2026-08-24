@@ -2,12 +2,18 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 
+/// Жизненный цикл приложения и действия меню. Представление состояния окном
+/// живёт в `PanelPresenter` и `PanelPresentation`, расчёт рамок — в
+/// `PanelFrames`, содержимое панели — в `PanelContentViews`. Раньше всё это
+/// было приватным `switch` внутри делегата, и проверить его было нечем.
 @MainActor
 public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private var panel: NotchPanel?
     private var trigger: TriggerZone?
+    private var presenter: PanelPresenter?
     private var machine = PanelStateMachine()
-    private var geometry = NotchGeometry(rect: .zero, hasPhysicalNotch: false)
+    private var geometry = NotchGeometry.none
+    private var screenWatcher: ScreenWatcher?
     // Аварийный выход: единственный способ управлять и выключить приложение,
     // раз у него нет иконки в доке.
     private var statusItem: StatusItemController?
@@ -38,53 +44,173 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private lazy var settingsWindow = SettingsWindowController(
         controller: settingsController, actions: settingsActions())
 
+    /// Порядок здесь важен и продиктован находкой ревью: иконка в строке меню
+    /// создаётся ПЕРВОЙ и безусловно. Раньше запуск начинался с `guard let
+    /// screen = NSScreen.main else { return }`, и вход с ещё не проснувшимся
+    /// дисплеем оставлял живой процесс без единого элемента интерфейса —
+    /// выключить его можно было только через мониторинг системы.
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        guard let screen = NSScreen.main else { return }
-        geometry = NotchGeometry.current(screen: screen)
-
-        setUpShelf()
-
-        let panel = NotchPanel(geometry: geometry)
-        panel.contentView = defaultContentView()
-        panel.orderFrontRegardless()
-        self.panel = panel
-
-        trigger = TriggerZone(geometry: geometry,
-                              // Наведение идёт через `hovered`, а не прямо в автомат:
-                              // раскрытие по наведению можно выключить в настройках,
-                              // но уход мыши обрабатывается всегда, иначе панель залипает.
-                              onHover: { [weak self] inside in self?.hovered(inside) },
-                              onClick: { [weak self] in self?.apply { $0.clicked() } },
-                              onDropFiles: { [weak self] urls in self?.acceptDroppedFiles(urls) })
-
         let statusItem = StatusItemController { [weak self] action in self?.handle(action) }
         self.statusItem = statusItem
-        refreshStatusItem()
 
+        setUpShelf()
         setUpClipboard()
+        setUpWindows()
+
+        // Пересчёт геометрии на смену экрана, разрешения и масштаба. Без него
+        // панель и невидимая зона оставались на старых координатах: наведение
+        // не работало, а окно, съедающее клики, стояло где-то в строке меню.
+        screenWatcher = ScreenWatcher { [weak self] in self?.screenParametersChanged() }
 
         // Хоткей делает ровно то же, что клик по челке и пункт «Показать
         // панель»: раскрывает панель, повторное нажатие складывает её.
         panelHotkey = GlobalHotkey.installed { [weak self] in self?.apply { $0.clicked() } }
+
+        // Состояние применяется до первого показа окна. Раньше панель
+        // поднималась на передний план при скрытом состоянии, и на машине без
+        // выреза в центре строки меню висела видимая плашка, не исчезавшая до
+        // первой пары «вошёл-вышел» мышью.
+        refresh()
     }
 
     /// Долгоживущие ресурсы гасим сами: регистрация хоткея живёт в системе, а
-    /// таймер и наблюдатель за буфером продолжали бы тикать во время выхода.
+    /// таймер, наблюдатель за буфером и наблюдатель за экранами продолжали бы
+    /// работать во время выхода.
     public func applicationWillTerminate(_ notification: Notification) {
         panelHotkey?.unregister()
         panelHotkey = nil
         activityTimer?.invalidate()
         activityTimer = nil
         pasteboardWatcher?.stop()
+        screenWatcher?.stop()
+        screenWatcher = nil
     }
 
-    private func setUpShelf() {
-        let coordinator = ShelfCoordinator(index: ShelfIndex(fileURL: AppPaths.shelf))
-        shelf = coordinator
-        // Чтение полки с проверкой каждого файла на диске — не дело старта
-        // на главной очереди: том может быть сетевым. Панель поднимется
-        // сразу, полка догрузится через мгновение.
-        Task { await coordinator.load() }
+    // MARK: - Окна
+
+    private func setUpWindows() {
+        geometry = ScreenChoice.geometry()
+
+        let panel = NotchPanel(geometry: geometry)
+        self.panel = panel
+
+        let trigger = TriggerZone(geometry: geometry,
+                                  // Наведение идёт через `hovered`, а не прямо в автомат:
+                                  // раскрытие по наведению можно выключить в настройках,
+                                  // но уход мыши обрабатывается всегда, иначе панель залипает.
+                                  onHover: { [weak self] inside in self?.hovered(inside) },
+                                  onClick: { [weak self] in self?.apply { $0.clicked() } },
+                                  onDropFiles: { [weak self] urls in self?.acceptDroppedFiles(urls) })
+        self.trigger = trigger
+
+        presenter = PanelPresenter(panel: panel, trigger: trigger,
+                                   content: { [weak self] content in
+                                       self?.contentView(for: content)
+                                   })
+    }
+
+    /// Экран сменился, отключился или сменил разрешение. Геометрия
+    /// пересчитывается, оба окна переставляются, текущее состояние применяется
+    /// заново — этим занимается `refresh`.
+    private func screenParametersChanged() {
+        geometry = ScreenChoice.geometry()
+        // Содержимое считает своё место от геометрии, поэтому при её смене оно
+        // обязано пересобраться, даже если состояние то же.
+        presenter?.invalidateContent()
+        refresh()
+    }
+
+    // MARK: - Состояние
+
+    private func apply(_ transition: (PanelStateMachine) -> PanelStateMachine) {
+        let previous = machine.state
+        machine = transition(machine)
+        // Уже летящее событие гасим при выходе из состояния «карточка». Иначе
+        // оно продолжало тикать под раскрытой панелью, и очередь оставалась
+        // непустой неизвестно сколько.
+        if previous == .activity, machine.state != .activity {
+            activityCenter.clear()
+        }
+        if machine.state == .expanded, previous != .expanded {
+            // Пока панель была закрыта, файлы с полки могли удалить или
+            // перенести. Проверка уходит с главной очереди: том бывает сетевым.
+            if let shelf { Task { await shelf.pruneMissingFiles() } }
+        }
+        refresh()
+    }
+
+    /// Единственная точка, из которой окна узнают о состоянии. Всё решение —
+    /// чистое значение `PanelPresentation`, поэтому проверяется тестом целиком.
+    private func refresh() {
+        presenter?.apply(PanelPresentation.make(state: machine.state,
+                                                event: activityCenter.queue.current,
+                                                geometry: geometry))
+        statusItem?.refresh(panel: machine.state,
+                            launchesAtLogin: SMAppService.mainApp.status == .enabled)
+    }
+
+    /// Наведение на челку раскрывает панель только если это разрешено
+    /// настройкой. Выключено — панель открывается кликом или комбинацией
+    /// клавиш, а мышь, проходящая мимо, ничего не дёргает.
+    ///
+    /// Уход мыши обрабатывается всегда, при любой настройке: иначе панель,
+    /// уже показанная по наведению, осталась бы висеть навсегда, если тумблер
+    /// выключить в этот самый момент.
+    private func hovered(_ inside: Bool) {
+        guard settingsController.settings.opensOnHover || !inside else { return }
+        apply { $0.hovering(inside) }
+    }
+
+    /// Закрытие приходит из обработчика внутри самой сетки, а гашение панели
+    /// сносит хостинг-вью этой сетки. Делать это посреди её же события —
+    /// напрашиваться на падение, поэтому переход откладывается на следующий
+    /// проход цикла событий.
+    private func dismissPanelSoon() {
+        DispatchQueue.main.async { [weak self] in
+            self?.apply { $0.dismissed() }
+        }
+    }
+
+    // MARK: - Содержимое панели
+
+    /// Сборка содержимого по его виду. Зовётся только когда вид действительно
+    /// поменялся — за это отвечает `PanelPresenter`.
+    private func contentView(for content: PanelContent) -> NSView? {
+        switch content.kind {
+        case .hint:
+            return hosting(PeekHintView(geometry: geometry))
+        case .activity:
+            guard let event = activityCenter.queue.current else { return nil }
+            return hosting(ActivityFigureContent(event: event,
+                                                 image: thumbnail(for: event),
+                                                 geometry: geometry))
+        case .history:
+            guard let coordinator = clipboardCoordinator, let blobs, let shelf else { return nil }
+            return hosting(NotchToppedPanel(geometry: geometry) {
+                HistoryPanelContent(coordinator: coordinator, blobs: blobs, shelf: shelf,
+                                    onClose: { [weak self] in self?.dismissPanelSoon() })
+            })
+        }
+    }
+
+    /// Картинка карточки читается здесь, один раз на событие, а не внутри
+    /// отрисовки: снимок бывает под сорок мегабайт, и чтение в отрисовке
+    /// повторялось на каждый тик таймера.
+    private func thumbnail(for event: ActivityEvent) -> NSImage? {
+        guard let blobs, let name = event.imageBlobName else { return nil }
+        return NSImage(contentsOf: blobs.url(for: name))
+    }
+
+    /// Любое содержимое панели живёт внутри приёмника файлов, а не рядом с ним:
+    /// AppKit ищет получателя сброса, поднимаясь от вью под курсором к её
+    /// родителям, поэтому «принимать файлы в любом месте панели» умеет только
+    /// родитель. Слой поверх содержимого не годится вовсе — он съел бы нажатия
+    /// у плиток истории и убил бы перетаскивание наружу.
+    private func hosting<Content: View>(_ content: Content) -> NSView {
+        let dropper = FileDropView()
+        dropper.onDrop = { [weak self] urls in self?.acceptDroppedFiles(urls) }
+        dropper.embed(NSHostingView(rootView: content))
+        return dropper
     }
 
     /// Файлы, брошенные на челку или на раскрытую панель.
@@ -101,52 +227,15 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Стекло с семантическим текстом внутри. Своих цветов не заводим — тема
-    /// системная, и переключение светлая/тёмная должно достаться бесплатно.
-    /// Раскладка идёт по `NotchLayout.inPanel`, а не занимает всё окно целиком:
-    /// текст сидит в теле, под челкой, а полосы слева и справа от неё
-    /// зарезервированы под короткие виджеты (время, погода, заряд) — их
-    /// подключит отдельная задача, но место под них уже не перекрывает челка.
-    private func defaultContentView() -> NSView {
-        hosting(GlassPanel {
-            NotchPanelContent(geometry: geometry)
-        })
-    }
+    // MARK: - Подсистемы
 
-    /// Любое содержимое панели живёт внутри приёмника файлов, а не рядом с ним:
-    /// AppKit ищет получателя сброса, поднимаясь от вью под курсором к её
-    /// родителям, поэтому «принимать файлы в любом месте панели» умеет только
-    /// родитель. Слой поверх содержимого не годится вовсе — он съел бы нажатия
-    /// у плиток истории и убил бы перетаскивание наружу.
-    private func hosting<Content: View>(_ content: Content) -> NSView {
-        let dropper = FileDropView()
-        dropper.onDrop = { [weak self] urls in self?.acceptDroppedFiles(urls) }
-        dropper.embed(NSHostingView(rootView: content))
-        return dropper
-    }
-
-    /// Содержимое раскрытой панели — сетка истории. Пока буфер не поднят
-    /// (первые мгновения после запуска), показываем то же, что и всегда:
-    /// сетка без координатора существовать не может.
-    private func expandedContentView() -> NSView {
-        guard let coordinator = clipboardCoordinator, let blobs, let shelf else {
-            return defaultContentView()
-        }
-        return hosting(GlassPanel {
-            HistoryPanelContent(coordinator: coordinator, blobs: blobs, shelf: shelf,
-                                geometry: geometry,
-                                onClose: { [weak self] in self?.dismissPanelSoon() })
-        })
-    }
-
-    /// Закрытие приходит из обработчика внутри самой сетки, а гашение панели
-    /// сносит хостинг-вью этой сетки. Делать это посреди её же события —
-    /// напрашиваться на падение, поэтому переход откладывается на следующий
-    /// проход цикла событий.
-    private func dismissPanelSoon() {
-        DispatchQueue.main.async { [weak self] in
-            self?.apply { $0.dismissed() }
-        }
+    private func setUpShelf() {
+        let coordinator = ShelfCoordinator(index: ShelfIndex(fileURL: AppPaths.shelf))
+        shelf = coordinator
+        // Чтение полки с проверкой каждого файла на диске — не дело старта
+        // на главной очереди: том может быть сетевым. Панель поднимется
+        // сразу, полка догрузится через мгновение.
+        Task { await coordinator.load() }
     }
 
     private func setUpClipboard() {
@@ -184,10 +273,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
 
         activityTimer = Timer.scheduledTimer(withTimeInterval: Config.Activity.tickInterval,
                                              repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.activityCenter.tick(now: Date())
-                self?.renderActivity()
-            }
+            Task { @MainActor in self?.activityTick() }
         }
     }
 
@@ -202,90 +288,25 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private func presentActivityIfNeeded() {
         guard activityCenter.queue.current != nil else { return }
         apply { $0.showingActivity() }
-        renderActivity()
     }
 
-    /// Рисует карточку для `activityCenter.queue.current` либо, когда её время
-    /// вышло, убирает её и возвращает панель в обычное состояние.
-    private func renderActivity() {
-        guard let panel, let blobs else { return }
-        if let event = activityCenter.queue.current {
-            // Карточка тоже принимает файлы: она закрывает челку собой, и без
-            // приёмника вокруг неё сброс на челку не сработал бы в те секунды,
-            // пока карточка висит.
-            panel.contentView = hosting(NotchContinuationFigure {
-                ActivityFigureContent(event: event, blobs: blobs, geometry: geometry)
-            })
-        } else if machine.state == .activity {
-            panel.contentView = defaultContentView()
-            apply { $0.activityFinished() }
-        }
+    /// Время карточки вышло — возвращаем панель в обычное состояние. Отрисовкой
+    /// тик не занимается: содержимое пересобирается только когда меняется
+    /// событие, и это решает `PanelPresenter`.
+    private func activityTick() {
+        activityCenter.tick(now: Date())
+        guard activityCenter.queue.current == nil, machine.state == .activity else { return }
+        apply { $0.activityFinished() }
     }
 
-    private func apply(_ transition: (PanelStateMachine) -> PanelStateMachine) {
-        let previous = machine.state
-        machine = transition(machine)
-        // Меню статус-бара и зона-триггер обновляются даже без панели — иначе
-        // при отсутствующем окне (например, до первого запуска) аварийный
-        // выход и зона над челкой молча замирали бы в устаревшем состоянии.
-        // Зона-триггер молчит, пока панель раскрыта, чтобы не воровать у неё мышь.
-        trigger?.setInteractive(machine.state != .expanded)
-        refreshStatusItem()
-        guard let panel else { return }
-        // Клавиатуру панель берёт только в раскрытом состоянии — во всех
-        // остальных выезжающая карточка не должна перехватывать набор текста
-        // у человека, который в этот момент печатает в другом приложении.
-        panel.setKeyboardAllowed(NotchPanel.allowsKeyboard(in: machine.state))
-        // Содержимое пересобирается только на самом переходе в раскрытое
-        // состояние и из него. Пересборка на каждый вызов `apply` обнуляла бы
-        // строку поиска, выделение и фокус — а зовут его в том числе на
-        // наведение мыши, то есть десятки раз подряд.
-        if machine.state == .expanded, previous != .expanded {
-            panel.contentView = expandedContentView()
-            // Пока панель была закрыта, файлы с полки могли удалить или
-            // перенести. Проверка уходит с главной очереди: том бывает сетевым.
-            if let shelf { Task { await shelf.pruneMissingFiles() } }
-        } else if previous == .expanded, machine.state != .expanded {
-            panel.contentView = defaultContentView()
-        }
-        switch machine.state {
-        case .hidden:
-            // Панель убирается совсем, а не сжимается в полоску. Сжатая полоска
-            // оставалась клавиатурным окном: нажатия пользователя улетали в
-            // невидимую щель вместо его приложения.
-            panel.orderOut(nil)
-        case .peek:
-            panel.resize(to: geometry.rect.size, geometry: geometry)
-            panel.orderFrontRegardless()
-        case .activity:
-            // Фигура прижата к верху экрана и продолжает челку. Содержимое при
-            // этом лежит ниже челки — за это отвечает раскладка, а не рамка.
-            panel.setFrame(NotchLayout.cardFrame(size: activityPanelSize, geometry: geometry),
-                           display: true, animate: false)
-            panel.orderFrontRegardless()
-        case .expanded:
-            panel.resize(to: Config.Notch.expandedSize, geometry: geometry)
-            panel.orderFrontRegardless()
-            panel.makeKey()
-        }
-    }
-
-    private var activityPanelSize: CGSize {
-        CGSize(width: max(geometry.rect.width + Config.Activity.cardExtraWidth,
-                          Config.Activity.cardMinWidth),
-               height: NotchLayout.cardHeight(contentHeight: Config.Activity.cardBodyHeight,
-                                              geometry: geometry))
-    }
-
-    private func refreshStatusItem() {
-        statusItem?.refresh(panel: machine.state,
-                            launchesAtLogin: SMAppService.mainApp.status == .enabled)
-    }
+    // MARK: - Меню и настройки
 
     private func handle(_ action: StatusMenuAction) {
         switch action {
         case .showPanel:
             apply { _ in PanelStateMachine(state: .expanded) }
+        case .hidePanel:
+            apply { $0.dismissed() }
         case .openSettings:
             settingsWindow.show()
         case .toggleLaunchAtLogin:
@@ -293,18 +314,6 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         case .quit:
             NSApp.terminate(nil)
         }
-    }
-
-    /// Наведение на челку раскрывает панель только если это разрешено
-    /// настройкой. Выключено — панель открывается кликом или комбинацией
-    /// клавиш, а мышь, проходящая мимо, ничего не дёргает.
-    ///
-    /// Уход мыши обрабатывается всегда, при любой настройке: иначе панель,
-    /// уже показанная по наведению, осталась бы висеть навсегда, если тумблер
-    /// выключить в этот самый момент.
-    private func hovered(_ inside: Bool) {
-        guard settingsController.settings.opensOnHover || !inside else { return }
-        apply { $0.hovering(inside) }
     }
 
     /// Что нужно применить сразу, а не при следующем событии. Уменьшенная
@@ -345,103 +354,6 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
             // Ошибку пишем в лог, а не глотаем и не выдаём за успех.
             NSLog("4elka: не удалось изменить автозапуск: %@", String(describing: error))
         }
-        refreshStatusItem()
-    }
-}
-
-/// Заглушка основного содержимого панели, раскладывающая себя по
-/// `NotchLayout.inPanel` вместо того, чтобы занимать окно целиком. Место
-/// в теле — под челкой — уже гарантированно не перекрыто ею; полосы слева
-/// и справа от челки существуют, но пока пустые: подключить туда время,
-/// погоду и заряд — отдельная задача, а не эта.
-///
-/// `GeometryReader` берёт актуальный размер контейнера на каждый рендер, а
-/// не размер на момент создания — так раскладка остаётся верной, когда
-/// `GlassPanel` растягивает это же вью при переходе peek → expanded.
-private struct NotchPanelContent: View {
-    let geometry: NotchGeometry
-
-    var body: some View {
-        GeometryReader { proxy in
-            let layout = NotchLayout.inPanel(size: proxy.size, geometry: geometry)
-            Text("4elka")
-                .foregroundStyle(.primary)
-                .padding(8)
-                .frame(width: layout.body.width, height: layout.body.height)
-                .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
-        }
-    }
-}
-
-/// Сетка истории и полоса полки под ней, посаженные в тело панели — под челку.
-/// Крылья слева и справа от челки им не отдаются: плитка в полосе высотой
-/// с челку не читается, а само тело панели раскрытой на `expandedSize`
-/// вполне достаточно.
-private struct HistoryPanelContent: View {
-    let coordinator: ClipboardCoordinator
-    let blobs: BlobStore
-    let shelf: ShelfCoordinator
-    let geometry: NotchGeometry
-    let onClose: () -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            let layout = NotchLayout.inPanel(size: proxy.size, geometry: geometry)
-            VStack(spacing: 0) {
-                HistoryGridView(coordinator: coordinator, blobs: blobs, onClose: onClose)
-                ShelfView(coordinator: shelf)
-                    .padding(.horizontal, Config.HistoryGrid.padding)
-                    .padding(.bottom, Config.HistoryGrid.padding)
-            }
-            .frame(width: layout.body.width, height: layout.body.height)
-            .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
-        }
-    }
-}
-
-/// «Фигура», продолжающая физическую челку в стороны и вниз, а не отдельная
-/// плашка под ней. Стык с настоящей челкой должен быть незаметен, поэтому
-/// фон здесь — единственный явно заданный (не семантический) цвет в проекте:
-/// чёрный в любой теме, а не адаптивный `.primary`/`.secondary`. Форсируем
-/// тёмную схему для содержимого сверху, чтобы `.foregroundStyle(.primary)` там
-/// оставалось читаемым семантическим текстом, а не белым на белом в светлой теме.
-/// Скруглены только нижние углы (`notchCornerRadius`) — верхние прижаты к
-/// самому верху экрана, где скругление было бы не видно.
-private struct NotchContinuationFigure<Content: View>: View {
-    let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .colorScheme(.dark)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black)
-            .clipShape(UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: Config.Notch.notchCornerRadius,
-                bottomTrailingRadius: Config.Notch.notchCornerRadius,
-                topTrailingRadius: 0))
-    }
-}
-
-/// Содержимое фигуры-карточки: сама карточка сидит в теле, под челкой — там,
-/// где `NotchLayout.inPanel` её не перекрывает. Крылья слева и справа от
-/// челки зарезервированы (`cardFrame` гарантирует им место), но пока пустые:
-/// подключить туда время, погоду и заряд — отдельная задача, а не эта.
-private struct ActivityFigureContent: View {
-    let event: ActivityEvent
-    let blobs: BlobStore
-    let geometry: NotchGeometry
-
-    var body: some View {
-        GeometryReader { proxy in
-            let layout = NotchLayout.inPanel(size: proxy.size, geometry: geometry)
-            ActivityCardView(event: event, blobs: blobs)
-                .frame(width: layout.body.width, height: layout.body.height)
-                .position(x: layout.body.midX, y: proxy.size.height - layout.body.midY)
-        }
+        refresh()
     }
 }

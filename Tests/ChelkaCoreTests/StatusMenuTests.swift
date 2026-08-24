@@ -5,17 +5,34 @@ import Testing
     // Иконка в строке меню — единственный способ выключить приложение:
     // иконки в доке нет, панель живёт только над челкой.
     for panel in [PanelState.hidden, .peek, .activity, .expanded] {
-        #expect(StatusMenu.items(panel: panel, launchesAtLogin: false).contains(.quit))
+        #expect(StatusMenu.items(panel: panel).contains(.quit))
     }
 }
 
 @Test func menuOffersToShowPanelOnlyWhenItIsNotAlreadyOpen() {
-    #expect(StatusMenu.items(panel: .hidden, launchesAtLogin: false).contains(.showPanel))
-    #expect(!StatusMenu.items(panel: .expanded, launchesAtLogin: false).contains(.showPanel))
+    #expect(StatusMenu.items(panel: .hidden).contains(.showPanel))
+    #expect(!StatusMenu.items(panel: .expanded).contains(.showPanel))
+}
+
+@Test func menuOffersToHideThePanelWhileItIsOpen() {
+    // Раньше при раскрытой панели меню не предлагало ничего: «Показать панель»
+    // прятали, «Скрыть» не добавляли, а клик по челке был отключён. Выходом
+    // оставалось только выключить приложение.
+    #expect(StatusMenu.items(panel: .expanded).contains(.hidePanel))
+    #expect(!StatusMenu.items(panel: .hidden).contains(.hidePanel))
+    #expect(StatusMenu.title(for: .hidePanel, launchesAtLogin: false) == "Скрыть панель")
+}
+
+@Test func menuAlwaysOffersAWayToChangeThePanelState() {
+    // В любом состоянии есть либо «Показать», либо «Скрыть» — но не пустота.
+    for panel in PanelState.allCases {
+        let items = StatusMenu.items(panel: panel)
+        #expect(items.contains(.showPanel) || items.contains(.hidePanel))
+    }
 }
 
 @Test func menuAlwaysOffersSettingsAndLaunchToggle() {
-    let items = StatusMenu.items(panel: .hidden, launchesAtLogin: false)
+    let items = StatusMenu.items(panel: .hidden)
     #expect(items.contains(.openSettings))
     #expect(items.contains(.toggleLaunchAtLogin))
 }
