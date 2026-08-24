@@ -14,6 +14,11 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private var machine = PanelStateMachine()
     private var geometry = NotchGeometry.none
     private var screenWatcher: ScreenWatcher?
+    /// Монитор клика мимо раскрытой панели. Живёт только пока панель
+    /// раскрыта — держать его вечно значило бы получать событие на каждый
+    /// клик где угодно на экране, хотя реагировать надо ровно в одном
+    /// состоянии.
+    private var outsideClickMonitors: [Any] = []
     // Аварийный выход: единственный способ управлять и выключить приложение,
     // раз у него нет иконки в доке.
     private var statusItem: StatusItemController?
@@ -104,6 +109,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     /// процессов при старте моста (`AdapterOrphans`) — страховка на случай
     /// `kill -9`, а не замена вежливому завершению.
     public func applicationWillTerminate(_ notification: Notification) {
+        stopOutsideClickMonitor()
         hotkeyRegistry.stop()
         activityTimer?.invalidate()
         activityTimer = nil
@@ -163,8 +169,47 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
             // Пока панель была закрыта, файлы с полки могли удалить или
             // перенести. Проверка уходит с главной очереди: том бывает сетевым.
             if let shelf { Task { await shelf.pruneMissingFiles() } }
+            startOutsideClickMonitor()
+        } else if machine.state != .expanded, previous == .expanded {
+            stopOutsideClickMonitor()
         }
         refresh()
+    }
+
+    /// Клик мимо раскрытой панели закрывает её — как у любого выпадающего
+    /// окна в системе. Панель не активируется и не становится главным окном,
+    /// поэтому клик по любому другому месту не приходит к ней сам: нужен и
+    /// глобальный монитор (клик в чужом приложении), и локальный (клик по
+    /// иконке в строке меню того же процесса) — у AppKit это два разных канала.
+    private func startOutsideClickMonitor() {
+        stopOutsideClickMonitor()
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+        var monitors: [Any] = []
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
+            self?.handlePotentialOutsideClick()
+        }) {
+            monitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            self?.handlePotentialOutsideClick()
+            return event
+        }) {
+            monitors.append(local)
+        }
+        outsideClickMonitors = monitors
+    }
+
+    private func stopOutsideClickMonitor() {
+        for monitor in outsideClickMonitors { NSEvent.removeMonitor(monitor) }
+        outsideClickMonitors = []
+    }
+
+    private func handlePotentialOutsideClick() {
+        guard machine.state == .expanded else { return }
+        let frame = PanelFrames.frame(for: .expanded, geometry: geometry)
+        guard OutsideClickDismissal.shouldDismiss(clickAt: NSEvent.mouseLocation,
+                                                  panelFrame: frame) else { return }
+        apply { $0.dismissed() }
     }
 
     /// Единственная точка, из которой окна узнают о состоянии. Всё решение —
