@@ -36,6 +36,74 @@ private func fixture(_ name: String, _ ext: String) throws -> Data {
     #expect(BluetoothParser.parse(Data(json.utf8)).isEmpty)
 }
 
+/// На части версий macOS уровень приходит числом `51`, а не строкой `"51%"`.
+/// Разбор только строки означал, что ВСЕ блютус-устройства молча исчезали
+/// из списка, и в логе не оставалось ни следа.
+@Test func bluetoothParserReadsLevelGivenAsNumber() {
+    let json = """
+    {"SPBluetoothDataType":[{"device_connected":[{"Magic Mouse":{"device_batteryLevelMain":51}}]}]}
+    """
+    let devices = BluetoothParser.parse(Data(json.utf8))
+    #expect(devices.count == 1)
+    #expect(devices.first?.percent == 51)
+}
+
+/// Смешанный вывод: одно ухо строкой, другое числом. Берём меньшее, как и всегда.
+@Test func bluetoothParserTakesMinAcrossStringAndNumberLevels() {
+    let json = """
+    {"SPBluetoothDataType":[{"device_connected":[{"AirPods":{"device_batteryLevelLeft":"80%",
+    "device_batteryLevelRight":45}}]}]}
+    """
+    #expect(BluetoothParser.parse(Data(json.utf8)).first?.percent == 45)
+}
+
+/// Уровень вне 0…100 — это не заряд. Минус пять иначе проходил как −5 и тут же
+/// давал «заряд на исходе», а девятьсот — «заряжен».
+@Test func bluetoothParserRejectsLevelsOutsideTheRange() {
+    for level in ["\"-5%\"", "\"900%\"", "-5", "900", "\"%\"", "\"ошибка\""] {
+        let json = """
+        {"SPBluetoothDataType":[{"device_connected":[{"Мышь":{"device_batteryLevelMain":\(level)}}]}]}
+        """
+        #expect(BluetoothParser.parse(Data(json.utf8)).isEmpty, "уровень \(level) не заряд")
+    }
+}
+
+@Test func bluetoothParserAcceptsTheEdgesOfTheRange() {
+    for (level, expected) in [("\"0%\"", 0), ("\"100%\"", 100), ("0", 0), ("100", 100)] {
+        let json = """
+        {"SPBluetoothDataType":[{"device_connected":[{"Мышь":{"device_batteryLevelMain":\(level)}}]}]}
+        """
+        #expect(BluetoothParser.parse(Data(json.utf8)).first?.percent == expected)
+    }
+}
+
+/// Подключённые устройства разобрались, а ни одного уровня в них не нашлось —
+/// про такое надо говорить, а не отдавать пустой список молча: именно так
+/// выглядит смена формата вывода на новой версии macOS.
+@Test func bluetoothParserTellsConnectedDevicesFromUnreadableOnes() {
+    let unreadable = """
+    {"SPBluetoothDataType":[{"device_connected":[{"Мышь":{"device_batteryLevelMain":{"вложенное":1}}},
+    {"Клава":{"device_batteryLevelMain":{"вложенное":2}}}]}]}
+    """
+    let reading = BluetoothParser.reading(Data(unreadable.utf8))
+    #expect(reading.devices.isEmpty)
+    #expect(reading.connectedCount == 2)
+    #expect(reading.isUnreadable)
+
+    // А вот пустой блютус — это не поломка, и говорить тут нечего.
+    let empty = #"{"SPBluetoothDataType":[{"device_connected":[]}]}"#
+    #expect(!BluetoothParser.reading(Data(empty.utf8)).isUnreadable)
+    #expect(!BluetoothParser.reading(Data("не json".utf8)).isUnreadable)
+}
+
+/// Живой вывод целевой машины: уровни ушей приходят строками `"100%"`,
+/// а `device_batteryLevelMain` в нём отсутствует вовсе.
+@Test func bluetoothParserReadsLevelsFromRealDumpWithoutMainKey() throws {
+    let reading = BluetoothParser.reading(try fixture("bluetooth", "json"))
+    #expect(!reading.isUnreadable)
+    #expect(reading.devices.contains { $0.name.contains("AirPods") })
+}
+
 @Test func parsesMacBatteryFromRealPmsetOutput() throws {
     let text = String(data: try fixture("pmset-batt", "txt"), encoding: .utf8)!
     let mac = try #require(MacBatteryParser.parse(text))

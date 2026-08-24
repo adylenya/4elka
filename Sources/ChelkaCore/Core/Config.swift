@@ -117,6 +117,30 @@ public enum Config {
         public static let pollInterval: TimeInterval = 60
     }
 
+    /// Опрос зарядов: внешние утилиты и границы того, что считается зарядом.
+    public enum Devices {
+        /// Заряд бывает только от нуля до ста. Всё остальное — не заряд:
+        /// уровень `-5` иначе тут же давал «заряд на исходе», а `900` —
+        /// «заряжен».
+        public static let percentRange = 0...100
+        /// Ключи уровня заряда в выводе `system_profiler`. У наушников два уха
+        /// и своё поле у корпуса, у мыши и клавиатуры — одно общее.
+        public static let bluetoothLevelKeys = ["device_batteryLevelLeft",
+                                                "device_batteryLevelRight",
+                                                "device_batteryLevelMain"]
+        /// Сколько ждать внешнюю утилиту, прежде чем считать её повисшей.
+        /// `ideviceinfo` на заблокированном айфоне, который не доверяет машине,
+        /// висит на usbmuxd НАВСЕГДА — без срока поток занимался намертво, и
+        /// таймер добавлял по одному такому потоку в минуту. Пять секунд —
+        /// втрое больше, чем занимает самый медленный из трёх (`system_profiler`
+        /// отвечает за 1–2 с).
+        public static let commandTimeout: TimeInterval = 5
+        /// Сколько ждать смерти процесса после того, как ему послали сигнал.
+        public static let terminationGrace: TimeInterval = 1
+        /// Как звать айфон, если утилита не отдала его имени.
+        public static let phoneFallbackName = "Айфон"
+    }
+
     public enum Activity {
         public static let duration: TimeInterval = 3
         /// Как часто тикает таймер, гасящий карточку по истечении `duration`.
