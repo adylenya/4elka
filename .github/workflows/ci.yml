@@ -1,0 +1,74 @@
+# Сборка и тесты на каждый пуш в main и каждый PR.
+# Раннер macos-26 обязателен: проект собирается только на macOS 26 со Swift 6.2
+# (Xcode 26), а бинарь с LSMinimumSystemVersion=26.0 на системе ниже не запустится
+# — тесты просто не стартуют.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Новый пуш в ту же ветку отменяет ещё бегущую сборку старого коммита.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Сборка и тесты
+    runs-on: macos-26
+    # Подвисший тест не должен держать раннер часами.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Версии инструментов
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      # swift build отдельно от тестов: swift test собирает только то, что нужно
+      # тестам, и сломанный исполняемый таргет Chelka мог бы проскочить.
+      - name: Сборка
+        run: swift build
+
+      # На раннере полный Xcode, поэтому голый swift test работает. Обвязка
+      # scripts/test.sh нужна только машинам с одними Command Line Tools —
+      # там она подставляет пути до Testing.framework, которых нет и здесь.
+      #
+      # --no-parallel обязателен: параллельный прогон на раннере намертво
+      # виснет (main-поток блокируется, сотни тестов встают в очередь за
+      # main actor), проверено живым прогоном. Серийный проходит за ~4 секунды,
+      # так что параллелизм здесь всё равно ничего не выигрывает.
+      - name: Тесты
+        run: swift test --no-parallel
+
+  app:
+    name: Бандл 4elka.app
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # make app сам собирает release-бинарь, мостик «сейчас играет»
+      # (vendor/build-adapter.sh) и подписывает бандл разовой подписью.
+      - name: Сборка бандла
+        run: make app
+
+      # Сначала ditto, потом upload-artifact: ditto сохраняет симлинки внутри
+      # MediaRemoteAdapter.framework, а upload-artifact сам по себе их теряет
+      # и отдал бы битый бандл.
+      - name: Упаковка
+        run: ditto -c -k --keepParent build/4elka.app build/4elka.zip
+
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: 4elka-app
+          path: build/4elka.zip

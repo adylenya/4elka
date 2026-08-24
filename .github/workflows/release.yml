@@ -1,0 +1,73 @@
+# Выпуск по тегу: собирает 4elka.app, пакует в zip и создаёт GitHub Release
+# с заметками из CHANGELOG.md.
+#
+# Как выпустить версию:
+#   1. Обновить CFBundleShortVersionString в Resources/Info.plist.
+#   2. Привести в порядок раздел «## <версия>» в CHANGELOG.md — его текст
+#      уедет в заметки выпуска.
+#   3. git tag v1.0 && git push origin v1.0 — дальше всё само.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Выпуск
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      # Тег обязан совпадать с версией бандла — иначе в выпуск уедет приложение,
+      # которое представляется другой версией, чем написано на релизе.
+      - name: Сверка тега с Info.plist
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          if [ "$TAG_VERSION" != "$PLIST_VERSION" ]; then
+            echo "тег $GITHUB_REF_NAME не совпадает с CFBundleShortVersionString=$PLIST_VERSION в Resources/Info.plist" >&2
+            exit 1
+          fi
+
+      - name: Сборка бандла
+        run: make app
+
+      # ditto вместо zip: сохраняет симлинки внутри MediaRemoteAdapter.framework.
+      - name: Упаковка
+        run: ditto -c -k --keepParent build/4elka.app "4elka-${GITHUB_REF_NAME}.zip"
+
+      # Заметки — раздел «## <версия>» из CHANGELOG.md. Заголовок раздела может
+      # нести хвост после версии («## 1.0 — ещё не выпущено»), поэтому сравнение
+      # по границе слова, а не по подстроке: v1.0 не подхватит раздел 1.0.1.
+      - name: Заметки к выпуску
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            /^## / { rest = substr($0, 4); on = (rest == ver || index(rest, ver " ") == 1); next }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "в CHANGELOG.md нет раздела «## $VERSION» — обойдёмся короткой заметкой"
+            echo "Выпуск $VERSION." > notes.md
+          fi
+          cat >> notes.md <<'EOF'
+
+          ---
+
+          Приложение не подписано сертификатом разработчика. Скачанный бандл macOS
+          может не открыть двойным кликом: правый клик → «Открыть», либо
+          «Системные настройки → Конфиденциальность и безопасность → Открыть».
+          Нужен macOS 26 или новее; весь смысл — на MacBook с челкой.
+          EOF
+
+      - name: Публикация
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "4elka-${GITHUB_REF_NAME}.zip" \
+            --title "4elka ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md
