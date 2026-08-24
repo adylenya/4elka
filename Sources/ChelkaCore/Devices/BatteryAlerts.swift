@@ -70,7 +70,10 @@ public struct BatteryAlerts: Equatable, Sendable {
             }
 
             let full = Config.Battery.fullThreshold
-            if device.percent >= full, state.fullArmed {
+            // Кабель обязателен, как и на верхнем пороге: «заряжен, отключай»
+            // без кабеля советует отключить то, что и так отключено. Так
+            // выглядел каждый холодный старт на полной батарее.
+            if device.isCharging, device.percent >= full, state.fullArmed {
                 fired.append(BatteryAlert(deviceName: device.name, percent: full, level: .full))
                 state.fullArmed = false
                 // «Заряжен» и «уже много» — про одно и то же событие. Устройство,

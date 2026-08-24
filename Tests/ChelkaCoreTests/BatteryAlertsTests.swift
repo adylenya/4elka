@@ -83,6 +83,24 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
     #expect(fired.contains { $0.level == .full })
 }
 
+/// «Заряжен, отключай» без кабеля — совет отключить то, что и так отключено.
+/// Так выглядит каждый холодный старт на полной батарее и каждое возвращение
+/// к маку, снятому с сети на сотне.
+@Test func fullAlertDoesNotFireWithoutCable() {
+    let alerts = BatteryAlerts()
+    let (_, fired) = alerts.evaluating([dev("Мак", 100, charging: false)])
+    #expect(fired.isEmpty)
+}
+
+/// И не залипает: кабель воткнули — карточка приходит.
+@Test func fullAlertFiresOnceTheCableIsBack() {
+    var alerts = BatteryAlerts()
+    var fired: [BatteryAlert]
+    (alerts, _) = alerts.evaluating([dev("Мак", 100, charging: false)])
+    (alerts, fired) = alerts.evaluating([dev("Мак", 100, charging: true)])
+    #expect(fired.first?.level == .full)
+}
+
 @Test func forgetsDeviceThatDisappeared() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
