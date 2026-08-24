@@ -2,10 +2,25 @@ import Foundation
 
 public protocol CommandRunning: Sendable {
     func run(_ path: String, _ args: [String]) -> String?
+    /// Есть ли утилита вообще. Отдельно от `run`, потому что ответ «да/нет»
+    /// не должен запускать процессы: `PhoneBattery.isAvailable` из-за этого
+    /// запускал до трёх.
+    func isExecutable(_ path: String) -> Bool
+}
+
+extension CommandRunning {
+    public func isExecutable(_ path: String) -> Bool {
+        FileManager.default.isExecutableFile(atPath: path)
+    }
 }
 
 public struct SystemCommandRunner: CommandRunning {
-    public init() {}
+    /// Сколько ждать утилиту, прежде чем считать её повисшей и убить.
+    private let timeout: TimeInterval
+
+    public init(timeout: TimeInterval = Config.Devices.commandTimeout) {
+        self.timeout = timeout
+    }
 
     public func run(_ path: String, _ args: [String]) -> String? {
         guard FileManager.default.isExecutableFile(atPath: path) else { return nil }
@@ -16,7 +31,28 @@ public struct SystemCommandRunner: CommandRunning {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
+
+        // Срок обязателен. `ideviceinfo` на заблокированном айфоне, который
+        // не доверяет машине, висит на usbmuxd НАВСЕГДА, а чтение до конца
+        // трубы ждёт его столько же — поток занимался намертво, и таймер
+        // добавлял по такому потоку в минуту.
+        //
+        // Сторож убивает процесс, а не прерывает чтение: убитый ребёнок
+        // закрывает свой конец трубы, и чтение возвращается само. В сторож
+        // уезжает только pid — число, а не сам `Process`, который делить
+        // между потоками нельзя.
+        let pid = process.processIdentifier
+        let watchdog = DispatchWorkItem {
+            NSLog("4elka: утилита %@ не ответила за отведённый срок, снимаю", path)
+            kill(pid, SIGKILL)
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout,
+                                                      execute: watchdog)
+
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        // Отменять надо до `waitUntilExit`: пока процесс не пожали, его pid
+        // занят зомби и никому другому достаться не может.
+        watchdog.cancel()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
