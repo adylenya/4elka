@@ -75,12 +75,23 @@ public extension Settings {
 
     /// Комбинация без ⌘/⌃/⌥ глобальным хоткеем быть не может: она отобрала бы
     /// у человека обычную букву во всех приложениях сразу.
+    ///
+    /// Незнакомые биты маски отбрасываются до всех проверок: маска уходит в
+    /// Carbon беззнаковым числом, а отрицательное значение из правленного
+    /// руками файла проверку «есть настоящий модификатор» проходило и
+    /// превращалось в мусор при переводе.
     private static func validHotkey(keyCode: Int, modifiers: Int) -> HotkeyChoice {
-        let hasRealModifier = modifiers & Config.Hotkey.requiredModifiers != 0
+        let known = modifiers & Config.Hotkey.knownModifiers
+        let hasRealModifier = known & Config.Hotkey.requiredModifiers != 0
         guard hasRealModifier, Config.Hotkey.keyCodeRange.contains(keyCode) else {
             return .defaultChoice
         }
-        return HotkeyChoice(keyCode: keyCode, modifiers: modifiers)
+        let choice = HotkeyChoice(keyCode: keyCode, modifiers: known)
+        // Занятое системой отменяется, даже если человек его когда-то выбрал:
+        // прошлая версия предлагала ⌥Пробел и ⌃Пробел, и убрать их из списка
+        // выбора мало — из файла настроек они сами не уйдут.
+        guard HotkeyChoice.takenBySystem(choice) == nil else { return .defaultChoice }
+        return choice
     }
 }
 

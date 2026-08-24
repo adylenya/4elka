@@ -300,6 +300,11 @@ public enum Config {
         /// Хоть один из этих флагов обязателен: комбинация без ⌘/⌃/⌥ отобрала
         /// бы у человека обычную букву во всех приложениях сразу.
         public static let requiredModifiers = Int(cmdKey | controlKey | optionKey)
+        /// Все флаги, которые маска модификаторов вообще может нести (6912).
+        /// Остальные биты — мусор: маска уходит в Carbon числом, а из файла
+        /// настроек, правленного руками, приходит что угодно вплоть до
+        /// отрицательного значения.
+        public static let knownModifiers = Int(cmdKey | controlKey | optionKey | shiftKey)
         /// Диапазон кодов клавиш виртуальной клавиатуры macOS.
         public static let keyCodeRange = 0...127
         /// Подпись владельца регистрации в Carbon: четыре байта '4ELK'.
