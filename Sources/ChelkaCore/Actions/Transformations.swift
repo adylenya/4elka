@@ -93,10 +93,13 @@ public enum Transformations {
     /// Вынесено отдельно и с локалью параметром, чтобы тест мог показать, что
     /// локаль правда влияет на результат: проверка «локаль фиксирована» без
     /// такого показа была бы утверждением ни о чём.
-    static func timestampText(_ seconds: Double, locale: Locale) -> String {
+    static func timestampText(_ seconds: Double, locale: Locale,
+                              zone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        formatter.timeZone = TimeZone(identifier: Config.timezone)
+        // Зона подписана в самом тексте: дату из лога человек сверяет с чем-то
+        // ещё, и без подписи непонятно, в чьём времени она показана.
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss zzz"
+        formatter.timeZone = zone
         formatter.locale = locale
         return formatter.string(from: Date(timeIntervalSince1970: seconds))
     }
@@ -108,6 +111,8 @@ public enum Transformations {
         }
         // Длинное число — миллисекунды: иначе 1755777600000 превратится в 55-й век.
         let seconds = trimmed.count >= millisecondDigitThreshold ? raw / 1000 : raw
-        return timestampText(seconds, locale: timestampLocale)
+        // Местная зона, а не зашитая в настройки приложения: зашитая показывала
+        // бы астанинское время в любом городе, где человек окажется.
+        return timestampText(seconds, locale: timestampLocale, zone: .current)
     }
 }
