@@ -74,7 +74,12 @@ public enum PhoneBattery {
               let percent = Int(raw), (0...100).contains(percent) else { return nil }
         let charging = runner.run(toolPath,
                                  ["-q", "com.apple.mobile.battery", "-k", "BatteryIsCharging"]) == "true"
-        let name = runner.run(toolPath, ["-k", "DeviceName"]) ?? "Айфон"
+        // Пустая строка — это отсутствие имени, а не имя. Имя айфона служит и
+        // опознавателем устройства, и ключом памяти порогов заряда: устройство
+        // с пустым именем ломало бы и список, и гистерезис.
+        let reported = runner.run(toolPath, ["-k", "DeviceName"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (reported?.isEmpty == false ? reported : nil) ?? Config.Devices.phoneFallbackName
         return DeviceCharge(name: name, percent: percent, isCharging: charging,
                             source: .phone, symbol: "iphone")
     }

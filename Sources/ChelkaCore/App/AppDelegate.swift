@@ -257,6 +257,15 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private func setUpShelf() {
         let coordinator = ShelfCoordinator(index: ShelfIndex(fileURL: AppPaths.shelf))
         shelf = coordinator
+        // Отказ отправки обязан быть видимым: молчание человек читает как
+        // «кнопка не работает» — он жмёт самолётик, окно выбора получателя не
+        // появляется, и причины нет нигде, кроме системного журнала.
+        coordinator.onOutcome = { [weak self] outcome in
+            guard let message = outcome.message else { return }
+            self?.submitActivity(ActivityEvent(kind: .clipboard,
+                                               title: message,
+                                               subtitle: "AirDrop"))
+        }
         // Чтение полки с проверкой каждого файла на диске — не дело старта
         // на главной очереди: том может быть сетевым. Панель поднимется
         // сразу, полка догрузится через мгновение.

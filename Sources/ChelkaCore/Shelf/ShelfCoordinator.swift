@@ -10,6 +10,10 @@ import Foundation
 public final class ShelfCoordinator: ObservableObject {
     @Published public private(set) var shelf = ShelfStore()
 
+    /// Чем закончилась отправка по AirDrop. Приложение вешает сюда карточку:
+    /// молчаливый отказ человек читает как «кнопка не работает».
+    public var onOutcome: ((AirDropSender.Outcome) -> Void)?
+
     private let index: ShelfIndex
     /// Проверка достижимости пути. Подменяется в тестах: они не должны зависеть
     /// от того, что смонтировано на машине, где их запускают.
@@ -67,8 +71,18 @@ public final class ShelfCoordinator: ObservableObject {
         ids.compactMap { id in shelf.items.first { $0.id == id }?.url }
     }
 
+    /// Отправка по AirDrop. Пропавшие файлы считаются в фоне: на отвалившемся
+    /// сетевом томе проверка существования отвечает секундами, а звать её с
+    /// главной очереди значило бы заморозить панель.
     public func sendViaAirDrop(_ ids: [UUID]) {
-        AirDropSender.send(urls(for: ids))
+        let selected = urls(for: ids)
+        Task { [weak self] in
+            let missing = await Task.detached(priority: .userInitiated) {
+                AirDropSender.missingFiles(selected)
+            }.value
+            let outcome = AirDropSender.send(selected, missing: missing)
+            self?.onOutcome?(outcome)
+        }
     }
 
     /// Полка пишется сразу и без задержки: она меняется от руки человека

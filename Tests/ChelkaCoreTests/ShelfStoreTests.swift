@@ -178,12 +178,23 @@ private func touch(_ url: URL) {
     #expect(FileReachabilityProbe.mountedVolumePaths().contains("/"))
 }
 
-@Test func airDropRefusesEmptySelection() {
-    #expect(!AirDropSender.canSend([]))
+@Test @MainActor func airDropRefusesEmptySelectionAndSaysSo() {
+    #expect(AirDropSender.send([], missing: []) == .nothingSelected)
 }
 
-@Test func airDropRefusesMissingFiles() {
-    #expect(!AirDropSender.canSend([u("/tmp/нет-\(UUID().uuidString).pdf")]))
+@Test @MainActor func airDropNamesTheFilesThatVanished() {
+    // Молчаливый отказ человек читает как «кнопка не работает»: он жмёт
+    // самолётик, окно выбора получателя не появляется, и причины нет нигде,
+    // кроме системного журнала.
+    let gone = u("/tmp/нет-\(UUID().uuidString).pdf")
+    let outcome = AirDropSender.send([gone], missing: [gone])
+    #expect(outcome == .filesGone([gone]))
+    let message = try! #require(outcome.message)
+    #expect(message.contains(gone.lastPathComponent))
+}
+
+@Test func airDropCountsMissingFilesItself() {
+    #expect(AirDropSender.missingFiles([u("/tmp/нет-\(UUID().uuidString).pdf")]).count == 1)
 }
 
 // MARK: - Имена и пути, которые ломают наивную реализацию
@@ -408,8 +419,8 @@ private func touch(_ url: URL) {
     #expect(coordinator.shelf.items.isEmpty)
 }
 
-@Test func airDropAcceptsAnExistingFile() {
+@Test func airDropSeesNothingMissingForAnExistingFile() {
     let file = shelfDir().appendingPathComponent("a.pdf")
     touch(file)
-    #expect(AirDropSender.canSend([file]))
+    #expect(AirDropSender.missingFiles([file]).isEmpty)
 }
