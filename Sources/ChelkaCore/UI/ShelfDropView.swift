@@ -16,6 +16,12 @@ import SwiftUI
 @MainActor
 public final class FileDropView: NSView {
     public var onDrop: ([URL]) -> Void = { _ in }
+    /// Наведение мыши на эту вью. `nil` по умолчанию — зона-триггер над челкой
+    /// тоже оборачивается этим же классом и следит за собой сама, второй
+    /// источник тех же событий ей не нужен. Панель подключает обработчик,
+    /// чтобы курсор, ушедший с самой челки в тело панели, не читался как
+    /// «наведение потеряно».
+    public var onHover: ((Bool) -> Void)?
 
     private var isTargeted = false {
         didSet { if isTargeted != oldValue { needsDisplay = true } }
@@ -100,6 +106,20 @@ public final class FileDropView: NSView {
             options: [.urlReadingFileURLsOnly: true])
         return (objects as? [URL]) ?? []
     }
+
+    /// Область отслеживания — во весь размер вью, всегда: содержимое панели
+    /// меняется размером на каждый переход состояния, и однократно заведённая
+    /// область осталась бы по старым границам.
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseEnteredAndExited, .activeAlways],
+                                       owner: self, userInfo: nil))
+    }
+
+    public override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    public override func mouseExited(with event: NSEvent) { onHover?(false) }
 }
 
 /// Зона приёма файлов внутри SwiftUI — та самая пустая полка с приглашением

@@ -129,10 +129,10 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         self.panel = panel
 
         let trigger = TriggerZone(geometry: geometry,
-                                  // Наведение идёт через `hovered`, а не прямо в автомат:
-                                  // раскрытие по наведению можно выключить в настройках,
-                                  // но уход мыши обрабатывается всегда, иначе панель залипает.
-                                  onHover: { [weak self] inside in self?.hovered(inside) },
+                                  // Своя именованная зона — курсор, ушедший с
+                                  // челки в панель, не должен читаться как
+                                  // «наведение потеряно», см. `notchHovered`.
+                                  onHover: { [weak self] inside in self?.notchHovered(inside) },
                                   onClick: { [weak self] in self?.apply { $0.clicked() } },
                                   onDropFiles: { [weak self] urls in self?.acceptDroppedFiles(urls) })
         self.trigger = trigger
@@ -222,6 +222,23 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
                             launchesAtLogin: SMAppService.mainApp.status == .enabled)
     }
 
+    /// Наведён ли курсор на челку или на панель — по отдельности от каждой,
+    /// а решение «наведение потеряно» принимается только когда он вышел из
+    /// ОБЕИХ. Раньше зона-триггер отслеживала только саму челку (220×38
+    /// точек), и курсор, двигаясь от неё дальше в панель, на мгновение выходил
+    /// за пределы этой зоны — панель схлопывалась в тот же момент, раньше, чем
+    /// курсор успевал дойти до неё самой. Владелец увидел это и попросил:
+    /// должно работать как дропдаун.
+    private var hover = HoverTracker()
+
+    private func notchHovered(_ inside: Bool) { hoverChanged("notch", inside: inside) }
+    private func panelHovered(_ inside: Bool) { hoverChanged("panel", inside: inside) }
+
+    private func hoverChanged(_ region: String, inside: Bool) {
+        hover = inside ? hover.entering(region) : hover.leaving(region)
+        hovered(hover.isHoveringAnything)
+    }
+
     /// Наведение на челку раскрывает панель только если это разрешено
     /// настройкой. Выключено — панель открывается кликом или комбинацией
     /// клавиш, а мышь, проходящая мимо, ничего не дёргает.
@@ -283,8 +300,25 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     /// родитель. Слой поверх содержимого не годится вовсе — он съел бы нажатия
     /// у плиток истории и убил бы перетаскивание наружу.
     private func hosting<Content: View>(_ content: Content) -> NSView {
+        // Прежнее содержимое сносится вместе со своей вью — а с ней и её
+        // подписка на `mouseExited`: AppKit не рассылает его только потому,
+        // что вью убрали из окна. Без сброса «наведён на панель» могло бы
+        // застрять во включённом состоянии от прежней вью навсегда, и панель
+        // никогда не схлопнулась бы, даже когда курсор давно её покинул.
+        //
+        // Сброс отложен на следующий проход цикла событий, а не сделан прямо
+        // здесь: `hosting` зовётся из глубины уже идущего `apply`, и прямой
+        // вызов `hoverChanged` внутри нее дёрнул бы `apply` повторно, пока
+        // первый вызов не успел вернуться, — до стека вызовов без выхода.
+        DispatchQueue.main.async { [weak self] in
+            self?.hoverChanged("panel", inside: false)
+        }
         let dropper = FileDropView()
         dropper.onDrop = { [weak self] urls in self?.acceptDroppedFiles(urls) }
+        // Курсор, ушедший с челки в тело панели, не должен читаться как
+        // «наведение потеряно» — это и есть половина дропдауна, вторая
+        // половина живёт в зоне-триггере, см. `notchHovered`.
+        dropper.onHover = { [weak self] inside in self?.panelHovered(inside) }
         dropper.embed(NSHostingView(rootView: content))
         return dropper
     }
