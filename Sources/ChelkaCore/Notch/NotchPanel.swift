@@ -45,13 +45,53 @@ public final class NotchPanel: NSPanel, PanelSurface {
 
     // MARK: - PanelSurface
 
+    /// Смена размера и положения — плавная. Раньше была мгновенной, и
+    /// переход между наведением и раскрытой панелью выглядел рваным скачком.
     public func place(at frame: CGRect) {
-        setFrame(frame, display: true, animate: false)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Config.Notch.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            self.animator().setFrame(frame, display: true)
+        }
     }
 
-    public func show() { orderFrontRegardless() }
+    /// Появление плавное только когда окна ещё не было на экране: если оно
+    /// уже видно и просто меняет размер (наведение → раскрытие), повторный
+    /// цикл «спрятать и показать» заново дал бы лишнюю вспышку прозрачности.
+    public func show() {
+        guard !isVisible else {
+            orderFrontRegardless()
+            return
+        }
+        alphaValue = 0
+        orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Config.Notch.animationDuration
+            self.animator().alphaValue = 1
+        }
+    }
 
-    public func hide() { orderOut(nil) }
+    /// Исчезновение — тоже плавное, и лишь затем окно реально снимается с
+    /// экрана: иначе, читая его прозрачность в момент `orderOut`, AppKit
+    /// начинал бы гасить уже пропавшее окно.
+    public func hide() {
+        guard isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Config.Notch.animationDuration
+            self.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            // Обработчик завершения анимации типизирован как обычное
+            // замыкание, а не как код на главном акторе — но AppKit
+            // вызывает его на главном потоке, как и весь остальной цикл
+            // анимации. `self` изолирован актором, поэтому явно, а не
+            // молчаливым `@unchecked Sendable`.
+            MainActor.assumeIsolated {
+                guard let self, self.alphaValue == 0 else { return }
+                self.orderOut(nil)
+                self.alphaValue = 1
+            }
+        })
+    }
 
     /// Разрешить или запретить окну становиться клавиатурным.
     ///

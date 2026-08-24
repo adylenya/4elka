@@ -361,6 +361,10 @@ public enum Config {
     }
 
     public enum Notch {
+        /// Плавность появления, исчезновения и смены размера окна панели.
+        /// Раньше все переходы были мгновенными — владелец пожаловался, что
+        /// открытие и закрытие выглядят рвано.
+        public static let animationDuration: TimeInterval = 0.18
         /// Ширина плашки на экранах без челки.
         public static let fallbackWidth: CGFloat = 220
         public static let fallbackHeight: CGFloat = 32
