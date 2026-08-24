@@ -31,4 +31,11 @@ public final class ActivityCenter: ObservableObject {
     public func tick(now: Date = Date()) {
         queue = queue.ticking(now: now)
     }
+
+    /// Погасить очередь немедленно. Зовётся при выходе из состояния «карточка»:
+    /// иначе уже летящее событие продолжало тикать под раскрытой панелью и
+    /// пыталось нарисоваться поверх сетки истории.
+    public func clear() {
+        queue = ActivityQueue()
+    }
 }

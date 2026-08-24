@@ -49,3 +49,23 @@ private let t0 = Date(timeIntervalSince1970: 1000)
 @Test func tickOnEmptyQueueIsNoOp() {
     #expect(ActivityQueue().ticking(now: t0) == ActivityQueue())
 }
+
+@MainActor
+@Test func clearingTheCentreStopsAnEventThatIsStillInFlight() {
+    // Ровно тот тупик, который чинили: карточка уже летела, человек выбрал
+    // «Показать панель», и через четверть секунды тикал таймер с непустой
+    // очередью — содержимое раскрытой панели заменялось чёрной фигурой
+    // карточки и не восстанавливалось никогда. Тест `suppressedWhilePanelExpanded`
+    // это не ловил: он про НОВОЕ событие, а не про уже летящее.
+    var state = PanelState.hidden
+    let centre = ActivityCenter(panelState: { state })
+    centre.submit(ev(.clipboard, "скопировано"), now: t0)
+    #expect(centre.queue.current != nil)
+
+    state = .expanded
+    centre.clear()
+    #expect(centre.queue.current == nil)
+    // И тик по пустой очереди её больше не оживляет.
+    centre.tick(now: t0.addingTimeInterval(1))
+    #expect(centre.queue.current == nil)
+}
