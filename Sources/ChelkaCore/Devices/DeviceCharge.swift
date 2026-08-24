@@ -1,7 +1,9 @@
 import Foundation
 
 public struct DeviceCharge: Equatable, Identifiable, Sendable {
-    public enum Source: Equatable, Sendable { case mac, bluetooth, phone }
+    /// Откуда пришёл заряд. Hashable и CaseIterable нужны `DevicePoll`:
+    /// по источнику решается, ответила ли утилита в этом опросе.
+    public enum Source: Hashable, CaseIterable, Sendable { case mac, bluetooth, phone }
 
     public var id: String { name }
     public let name: String

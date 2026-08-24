@@ -270,12 +270,13 @@ private func touch(_ url: URL) {
     let file = dir.appendingPathComponent("shelf.json")
     let index = ShelfIndex(fileURL: file)
     let report = dir.appendingPathComponent("важный-отчёт.pdf")
-    let other = dir.appendingPathComponent("прочее.pdf")
+    let others = (0..<20).map { dir.appendingPathComponent("прочее-\($0).pdf") }
     touch(report)
-    touch(other)
-    // Важный файл брошен последним, значит лежит в начале файла и попадает
-    // в уцелевшую половину — именно за ним человек и пойдёт в отложенное.
-    try index.save(ShelfStore().adding([other], now: now)
+    others.forEach(touch)
+    // Важный файл брошен последним, значит лежит в начале файла и заведомо
+    // попадает в уцелевшую половину — именно за ним человек и пойдёт
+    // в отложенное.
+    try index.save(ShelfStore().adding(others, now: now)
         .adding([report], now: now.addingTimeInterval(1)))
     let whole = try Data(contentsOf: file)
     let half = whole.prefix(whole.count / 2)

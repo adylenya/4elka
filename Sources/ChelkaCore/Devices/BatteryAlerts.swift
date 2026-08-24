@@ -35,6 +35,10 @@ public struct BatteryAlerts: Equatable, Sendable {
         var lowArmed: Bool
         var highArmed: Bool
         var fullArmed: Bool
+        /// Откуда пришло устройство. По источнику решается, забывать ли его
+        /// состояние, когда устройства в опросе нет: источник ответил — значит
+        /// устройство отключили, источник молчит — значит мы просто не знаем.
+        var source: DeviceCharge.Source
     }
 
     private let armed: [String: Armed]
@@ -42,18 +46,24 @@ public struct BatteryAlerts: Equatable, Sendable {
     public init() { armed = [:] }
     private init(armed: [String: Armed]) { self.armed = armed }
 
-    public func evaluating(_ devices: [DeviceCharge]) -> (BatteryAlerts, [BatteryAlert]) {
+    public func evaluating(_ poll: DevicePoll) -> (BatteryAlerts, [BatteryAlert]) {
         let low = Config.Battery.lowThreshold
         let high = Config.Battery.highThreshold
         let gap = Config.Battery.hysteresis
 
-        var nextArmed: [String: Armed] = [:]
+        // Состояние устройств, чей источник в этом опросе не ответил, переносим
+        // как есть: сорвавшаяся утилита неотличима от отключённого устройства
+        // по одному лишь отсутствию в списке, а забыть взведение по её провалу
+        // значит выдать ту же карточку второй раз на том же заряде.
+        var nextArmed = armed.filter { !poll.answered.contains($0.value.source) }
         var fired: [BatteryAlert] = []
 
-        for device in devices {
+        for device in poll.devices {
             // Незнакомое устройство считается взведённым, чтобы первый же
             // замер ниже порога дал уведомление.
-            var state = armed[device.name] ?? Armed(lowArmed: true, highArmed: true, fullArmed: true)
+            var state = armed[device.name]
+                ?? Armed(lowArmed: true, highArmed: true, fullArmed: true, source: device.source)
+            state.source = device.source
 
             if device.percent < low, state.lowArmed {
                 fired.append(BatteryAlert(deviceName: device.name, percent: device.percent, level: .low))
@@ -87,8 +97,6 @@ public struct BatteryAlerts: Equatable, Sendable {
             nextArmed[device.name] = state
         }
 
-        // Исчезнувшие устройства не переносим: при следующем подключении
-        // правило должно отработать заново.
         return (BatteryAlerts(armed: nextArmed), fired)
     }
 }

@@ -6,12 +6,21 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
                  source: .bluetooth, symbol: "airpods")
 }
 
+private func mac(_ percent: Int, charging: Bool = false) -> DeviceCharge {
+    DeviceCharge(name: "Мак", percent: percent, isCharging: charging,
+                 source: .mac, symbol: "laptopcomputer")
+}
+
+/// Удачный опрос: все источники ответили. Именно про такой опрос можно сказать,
+/// что отсутствующее устройство действительно отключили.
+private func polled(_ devices: DeviceCharge...) -> DevicePoll { .complete(devices) }
+
 @Test func firesOnceWhenCrossingLowThreshold() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, fired) = alerts.evaluating([dev("Наушники", 25)])
+    (alerts, fired) = alerts.evaluating(polled(dev("Наушники", 25)))
     #expect(fired.isEmpty)
-    (alerts, fired) = alerts.evaluating([dev("Наушники", 19)])
+    (alerts, fired) = alerts.evaluating(polled(dev("Наушники", 19)))
     #expect(fired.count == 1)
     #expect(fired.first?.level == .low)
 }
@@ -19,10 +28,10 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
 @Test func doesNotRepeatWhileStayingBelowThreshold() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, _) = alerts.evaluating([dev("Наушники", 25)])
-    (alerts, _) = alerts.evaluating([dev("Наушники", 19)])
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 25)))
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 19)))
     for percent in [18, 17, 12, 5, 1] {
-        (alerts, fired) = alerts.evaluating([dev("Наушники", percent)])
+        (alerts, fired) = alerts.evaluating(polled(dev("Наушники", percent)))
         #expect(fired.isEmpty)
     }
 }
@@ -30,28 +39,28 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
 @Test func rearmsOnlyAfterRisingAboveHysteresis() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, _) = alerts.evaluating([dev("Наушники", 25)])
-    (alerts, _) = alerts.evaluating([dev("Наушники", 19)])
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 25)))
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 19)))
     // 20 + 5 = 25 — ещё не перевзвелось.
-    (alerts, _) = alerts.evaluating([dev("Наушники", 24)])
-    (alerts, fired) = alerts.evaluating([dev("Наушники", 19)])
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 24)))
+    (alerts, fired) = alerts.evaluating(polled(dev("Наушники", 19)))
     #expect(fired.isEmpty)
     // Поднялось выше 25 — взвелось заново.
-    (alerts, _) = alerts.evaluating([dev("Наушники", 30)])
-    (alerts, fired) = alerts.evaluating([dev("Наушники", 19)])
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 30)))
+    (alerts, fired) = alerts.evaluating(polled(dev("Наушники", 19)))
     #expect(fired.count == 1)
 }
 
 @Test func highThresholdFiresOnlyWhileCharging() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, _) = alerts.evaluating([dev("Айфон", 70, charging: false)])
-    (alerts, fired) = alerts.evaluating([dev("Айфон", 85, charging: false)])
+    (alerts, _) = alerts.evaluating(polled(dev("Айфон", 70, charging: false)))
+    (alerts, fired) = alerts.evaluating(polled(dev("Айфон", 85, charging: false)))
     #expect(fired.isEmpty)
 
     var charging = BatteryAlerts()
-    (charging, _) = charging.evaluating([dev("Айфон", 70, charging: true)])
-    (charging, fired) = charging.evaluating([dev("Айфон", 85, charging: true)])
+    (charging, _) = charging.evaluating(polled(dev("Айфон", 70, charging: true)))
+    (charging, fired) = charging.evaluating(polled(dev("Айфон", 85, charging: true)))
     #expect(fired.first?.level == .high)
 }
 
@@ -59,7 +68,7 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
     // Устройство, впервые увиденное сразу на сотне при зарядке, не должно выдать
     // две карточки об одном событии.
     let alerts = BatteryAlerts()
-    let (_, fired) = alerts.evaluating([dev("Айфон", 100, charging: true)])
+    let (_, fired) = alerts.evaluating(polled(dev("Айфон", 100, charging: true)))
     #expect(fired.count == 1)
     #expect(fired.first?.level == .full)
 }
@@ -67,19 +76,19 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
 @Test func rearmsExactlyAtTheHysteresisBoundary() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, _) = alerts.evaluating([dev("Наушники", 30)])
-    (alerts, _) = alerts.evaluating([dev("Наушники", 19)])
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 30)))
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 19)))
     // 20 + 5 = 25 ровно: граница включительная, значит взводится.
-    (alerts, _) = alerts.evaluating([dev("Наушники", 25)])
-    (alerts, fired) = alerts.evaluating([dev("Наушники", 19)])
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 25)))
+    (alerts, fired) = alerts.evaluating(polled(dev("Наушники", 19)))
     #expect(fired.count == 1)
 }
 
 @Test func fullChargeFiresItsOwnAlert() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, _) = alerts.evaluating([dev("Айфон", 95, charging: true)])
-    (alerts, fired) = alerts.evaluating([dev("Айфон", 100, charging: true)])
+    (alerts, _) = alerts.evaluating(polled(dev("Айфон", 95, charging: true)))
+    (alerts, fired) = alerts.evaluating(polled(dev("Айфон", 100, charging: true)))
     #expect(fired.contains { $0.level == .full })
 }
 
@@ -88,7 +97,7 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
 /// к маку, снятому с сети на сотне.
 @Test func fullAlertDoesNotFireWithoutCable() {
     let alerts = BatteryAlerts()
-    let (_, fired) = alerts.evaluating([dev("Мак", 100, charging: false)])
+    let (_, fired) = alerts.evaluating(polled(dev("Мак", 100, charging: false)))
     #expect(fired.isEmpty)
 }
 
@@ -96,26 +105,69 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
 @Test func fullAlertFiresOnceTheCableIsBack() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, _) = alerts.evaluating([dev("Мак", 100, charging: false)])
-    (alerts, fired) = alerts.evaluating([dev("Мак", 100, charging: true)])
+    (alerts, _) = alerts.evaluating(polled(dev("Мак", 100, charging: false)))
+    (alerts, fired) = alerts.evaluating(polled(dev("Мак", 100, charging: true)))
     #expect(fired.first?.level == .full)
 }
 
-@Test func forgetsDeviceThatDisappeared() {
+// MARK: - Забывать состояние можно только по удачному опросу
+
+/// Требование: устройство забывается тогда, когда его источник ОТВЕТИЛ, а
+/// устройства в ответе не оказалось. Тогда наушники действительно выключили,
+/// и при следующем включении правило порога обязано отработать заново.
+@Test func forgetsDeviceThatASuccessfulPollDidNotSee() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, _) = alerts.evaluating([dev("Наушники", 25)])
-    (alerts, _) = alerts.evaluating([dev("Наушники", 19)])
-    // Наушники выключили — состояние забылось.
-    (alerts, _) = alerts.evaluating([])
-    // Включили обратно тоже на 19 — правило должно отработать заново.
-    (alerts, fired) = alerts.evaluating([dev("Наушники", 19)])
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 25)))
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 19)))
+    // Блютус ответил, наушников в ответе нет — их выключили.
+    (alerts, _) = alerts.evaluating(DevicePoll(devices: [], answered: [.bluetooth]))
+    // Включили обратно тоже на 19 — правило отрабатывает заново.
+    (alerts, fired) = alerts.evaluating(polled(dev("Наушники", 19)))
     #expect(fired.count == 1)
+}
+
+/// Требование: сорвавшийся опрос состояние НЕ стирает. Мак на 15%, карточка
+/// показана; следующий опрос — `pmset` вернул ненулевой код, мака в списке нет;
+/// третий опрос — мак снова на 15%. Карточка обязана остаться одной: заряд
+/// тот же, событие то же.
+@Test func failedPollDoesNotRepeatTheAlertOnTheSameCharge() {
+    var alerts = BatteryAlerts()
+    var fired: [BatteryAlert]
+    var total = 0
+    (alerts, fired) = alerts.evaluating(DevicePoll(devices: [mac(15)], answered: [.mac]))
+    total += fired.count
+    // pmset сорвался: устройства в опросе нет, но и ответа от источника нет.
+    (alerts, fired) = alerts.evaluating(DevicePoll.failed)
+    total += fired.count
+    // Тот же мак, тот же заряд.
+    (alerts, fired) = alerts.evaluating(DevicePoll(devices: [mac(15)], answered: [.mac]))
+    total += fired.count
+    #expect(total == 1)
+}
+
+/// Провал одного источника не имеет права стирать состояние устройств другого,
+/// и наоборот: удачный ответ блютуса про отключённые наушники — забывает
+/// наушники, но не мака, про которого в этом опросе ничего не сказали.
+@Test func sourcesAreForgottenIndependently() {
+    var alerts = BatteryAlerts()
+    var fired: [BatteryAlert]
+    (alerts, _) = alerts.evaluating(DevicePoll(devices: [mac(15), dev("Наушники", 15)],
+                                               answered: [.mac, .bluetooth]))
+    // Блютус ответил без наушников (их выключили), pmset сорвался.
+    (alerts, _) = alerts.evaluating(DevicePoll(devices: [], answered: [.bluetooth]))
+    // Наушники вернулись на том же заряде — карточка положена заново.
+    (alerts, fired) = alerts.evaluating(DevicePoll(devices: [dev("Наушники", 15)],
+                                                   answered: [.bluetooth]))
+    #expect(fired.count == 1)
+    // А мак на том же заряде — нет: про него ничего не забывали.
+    (alerts, fired) = alerts.evaluating(DevicePoll(devices: [mac(15)], answered: [.mac]))
+    #expect(fired.isEmpty)
 }
 
 @Test func firstSightBelowThresholdFiresImmediately() {
     let alerts = BatteryAlerts()
-    let (_, fired) = alerts.evaluating([dev("Наушники", 8)])
+    let (_, fired) = alerts.evaluating(polled(dev("Наушники", 8)))
     #expect(fired.count == 1)
     #expect(fired.first?.level == .low)
 }
@@ -123,8 +175,8 @@ private func dev(_ name: String, _ percent: Int, charging: Bool = false) -> Devi
 @Test func handlesSeveralDevicesIndependently() {
     var alerts = BatteryAlerts()
     var fired: [BatteryAlert]
-    (alerts, _) = alerts.evaluating([dev("Наушники", 50), dev("Мышь", 50)])
-    (alerts, fired) = alerts.evaluating([dev("Наушники", 10), dev("Мышь", 50)])
+    (alerts, _) = alerts.evaluating(polled(dev("Наушники", 50), dev("Мышь", 50)))
+    (alerts, fired) = alerts.evaluating(polled(dev("Наушники", 10), dev("Мышь", 50)))
     #expect(fired.count == 1)
     #expect(fired.first?.deviceName == "Наушники")
 }
