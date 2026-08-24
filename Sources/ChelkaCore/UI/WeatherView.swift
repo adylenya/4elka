@@ -22,17 +22,21 @@ public struct WeatherView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 8) {
             if let snapshot = provider.snapshot {
                 Image(systemName: snapshot.symbol)
+                    .font(.system(size: Config.Panel.weatherIconSize))
                     .foregroundStyle(.primary)
-                Text(snapshot.summary)
-                    .foregroundStyle(.primary)
-                if let age = snapshot.ageDescription(now: Date(),
-                                                     staleAfter: provider.current.staleAfter) {
-                    Text(age)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(snapshot.summary)
+                        .font(.system(size: Config.Panel.weatherTemperatureSize, weight: .medium))
+                        .foregroundStyle(.primary)
+                    if let age = snapshot.ageDescription(now: Date(),
+                                                         staleAfter: provider.current.staleAfter) {
+                        Text(age)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } else {
                 Text(PanelPlaceholder.weather)

@@ -24,7 +24,10 @@ public struct DevicesView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: Config.Panel.rowSpacing) {
+        // Свой, более тесный зазор: список устройств тянулся вниз тем же
+        // зазором, что разделяет целые разделы полосы, и занимал заметно
+        // больше места, чем строка погоды над ним.
+        VStack(alignment: .leading, spacing: Config.Panel.deviceRowSpacing) {
             let devices = DeviceList.visible(provider.devices, showsPhone: showsPhone())
             if devices.isEmpty {
                 Text(PanelPlaceholder.devices)
@@ -46,6 +49,7 @@ private struct DeviceRowView: View {
     var body: some View {
         HStack(spacing: Config.HistoryGrid.innerSpacing) {
             Image(systemName: device.symbol)
+                .font(.caption)
                 .foregroundStyle(.primary)
                 .frame(width: Config.Panel.deviceSymbolWidth, alignment: .leading)
             Text(device.name)
