@@ -74,3 +74,13 @@ private func cardSources() -> [CardSource] {
         #expect(queue.queue.current != nil, "\(source.field) включён, а карточки нет")
     }
 }
+
+// MARK: - Страховка от повторения
+
+@Test func everySettingFieldIsEitherAppliedOrDeclaredCosmetic() {
+    // Ловит класс ошибки, а не один случай: добавил поле в `Settings` — либо
+    // подключи и впиши в `appliedFields`, либо осознанно отметь косметическим.
+    // Ничего не подключить и ничего не сказать больше не получится молча.
+    #expect(SettingsApplication.unappliedFields.isEmpty,
+            "без применяющей стороны: \(SettingsApplication.unappliedFields)")
+}
