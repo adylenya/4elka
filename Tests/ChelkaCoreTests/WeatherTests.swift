@@ -131,20 +131,119 @@ private let now = Date(timeIntervalSince1970: 10_000)
     #expect(WeatherSnapshot.decode(Data(json.utf8), now: now) == nil)
 }
 
-@Test @MainActor func startIsIdempotentAndDoesNotStackTimers() async {
-    var calls = 0
-    let provider = WeatherProvider(
+/// Подделка таймеров: считает заведённые и живые и умеет тикнуть за них.
+///
+/// Иначе «повторный `start()` не плодит таймеры» проверить нечем. Прежний тест
+/// считал обращения к сети и утверждал `calls <= 2` при замеренной единице:
+/// лишний таймер на пятнадцатиминутном интервале за время теста не тикает ни
+/// разу, поэтому число обращений не менялось и со снятой защитой — тест был
+/// зелёным на сломанном коде.
+@MainActor
+final class FakeRefreshTimers: RefreshTimers {
+    /// Интервалы всех заведённых таймеров, по порядку.
+    private(set) var intervals: [TimeInterval] = []
+    private var alive: [ObjectIdentifier: @Sendable @MainActor () async -> Void] = [:]
+
+    var scheduledCount: Int { intervals.count }
+    var aliveCount: Int { alive.count }
+
+    func schedule(every interval: TimeInterval,
+                  tick: @escaping @Sendable @MainActor () async -> Void) -> RefreshTimer {
+        intervals.append(interval)
+        let handle = Handle(owner: self)
+        alive[ObjectIdentifier(handle)] = tick
+        return handle
+    }
+
+    /// Тик всех живых таймеров. Асинхронный, чтобы тест ДОЖДАЛСЯ обновления,
+    /// а не надеялся, что порождённая задача успеет выполниться.
+    func fireAll() async {
+        for tick in alive.values { await tick() }
+    }
+
+    fileprivate func forget(_ handle: Handle) { alive[ObjectIdentifier(handle)] = nil }
+
+    @MainActor
+    final class Handle: RefreshTimer {
+        private weak var owner: FakeRefreshTimers?
+        init(owner: FakeRefreshTimers) { self.owner = owner }
+        func cancel() { owner?.forget(self) }
+    }
+}
+
+@MainActor
+private func provider(timers: RefreshTimers,
+                      fetch: @escaping (URL) async throws -> Data) -> WeatherProvider {
+    WeatherProvider(cacheURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent("timers-\(UUID().uuidString).json"),
+                    timers: timers,
+                    fetch: fetch)
+}
+
+private func weatherJSON(_ celsius: Double) -> Data {
+    Data(#"{"current":{"temperature_2m":\#(celsius),"apparent_temperature":3,"weather_code":1,"wind_speed_10m":2}}"#.utf8)
+}
+
+/// Второй `start()` обязан не заводить второго таймера: два независимых
+/// обновления на одном интервале, без синхронизации между ними, — это гонка,
+/// а первый таймер к тому же остался бы жить, и выключить его было бы нечем.
+@Test @MainActor func secondStartDoesNotAddASecondTimer() async {
+    let timers = FakeRefreshTimers()
+    let weather = provider(timers: timers, fetch: { _ in weatherJSON(5) })
+
+    weather.start()
+    weather.start()
+
+    #expect(timers.scheduledCount == 1)
+    #expect(timers.aliveCount == 1)
+
+    weather.stop()
+    #expect(timers.aliveCount == 0)
+}
+
+/// Смена интервала в настройках перезаводит таймер, а не добавляет второй:
+/// заведено два, а живёт по-прежнему один.
+@Test @MainActor func changedIntervalReplacesTheTimerInsteadOfAddingOne() async {
+    final class Box { var value = Settings.defaults }
+    let box = Box()
+    let timers = FakeRefreshTimers()
+    let weather = WeatherProvider(
         cacheURL: FileManager.default.temporaryDirectory
-            .appendingPathComponent("idem-\(UUID().uuidString).json"),
-        fetch: { _ in
-            calls += 1
-            return Data(#"{"current":{"temperature_2m":5,"apparent_temperature":3,"weather_code":1,"wind_speed_10m":2}}"#.utf8)
-        })
-    provider.start()
-    provider.start()
-    await provider.refresh()
-    #expect(calls <= 2)
-    provider.stop()
+            .appendingPathComponent("timers-\(UUID().uuidString).json"),
+        settings: { box.value.weather },
+        timers: timers,
+        fetch: { _ in weatherJSON(5) })
+
+    weather.start()
+    box.value.weatherRefreshMinutes = 1
+    weather.settingsChanged()
+
+    #expect(timers.scheduledCount == 2)
+    #expect(timers.aliveCount == 1)
+    #expect(timers.intervals == [Config.Weather.refreshInterval, Config.secondsInMinute])
+
+    weather.stop()
+    #expect(timers.aliveCount == 0)
+}
+
+/// Таймер обязан обновлять погоду. Без этой проверки «не плодить таймеры»
+/// выполнялось бы и не заводя ни одного.
+@Test @MainActor func timerTickIsWhatRefreshesTheWeather() async {
+    let timers = FakeRefreshTimers()
+    var answer = 1.0
+    let weather = provider(timers: timers, fetch: { _ in weatherJSON(answer) })
+
+    weather.start()
+    // Отдаём управление немедленному обновлению из `start()`, чтобы дальше
+    // единственным источником новых данных остался тик таймера.
+    await Task.yield()
+    await timers.fireAll()
+
+    answer = 7
+    await timers.fireAll()
+    #expect(weather.snapshot?.celsius == 7)
+
+    weather.stop()
 }
 
 @MainActor

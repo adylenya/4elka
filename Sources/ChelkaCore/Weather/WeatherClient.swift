@@ -16,21 +16,27 @@ public final class WeatherProvider: ObservableObject {
 
     private let cacheURL: URL
     private let settings: () -> WeatherSettings
+    private let timers: RefreshTimers
     private let fetch: (URL) async throws -> Data
-    private var timer: Timer?
+    private var timer: RefreshTimer?
     /// С каким интервалом заведён таймер. Нужно, чтобы поймать смену интервала
     /// в настройках: без этого «раз в минуту» вступало бы в силу только после
     /// перезапуска приложения.
     private(set) var timerInterval: TimeInterval?
     private var isRefreshing = false
 
+    /// `timers` — чем заводится периодический таймер. Параметром, а не `Timer`
+    /// внутри: только так проверяется, что повторный `start()` не заводит
+    /// второго таймера. Подробнее — в `RefreshTimers`.
     public init(cacheURL: URL,
                 settings: @escaping () -> WeatherSettings = { .defaults },
+                timers: RefreshTimers = SystemRefreshTimers(),
                 fetch: @escaping (URL) async throws -> Data = { url in
                     try await URLSession.shared.data(from: url).0
                 }) {
         self.cacheURL = cacheURL
         self.settings = settings
+        self.timers = timers
         self.fetch = fetch
         snapshot = Self.loadCache(cacheURL)
     }
@@ -68,7 +74,7 @@ public final class WeatherProvider: ObservableObject {
     }
 
     public func stop() {
-        timer?.invalidate()
+        timer?.cancel()
         timer = nil
         timerInterval = nil
     }
@@ -86,11 +92,14 @@ public final class WeatherProvider: ObservableObject {
         Task { await refresh() }
     }
 
+    /// Прежний таймер гасится ДО того, как заводится новый: иначе он продолжит
+    /// тикать сам по себе, ссылку на него уже никто не держит, и выключить его
+    /// будет нечем.
     private func schedule(interval: TimeInterval) {
-        timer?.invalidate()
+        timer?.cancel()
         timerInterval = interval
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.refresh() }
+        timer = timers.schedule(every: interval) { [weak self] in
+            await self?.refresh()
         }
     }
 
