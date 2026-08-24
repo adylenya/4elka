@@ -14,8 +14,9 @@ public struct PanelContent: Equatable, Sendable {
         case hint
         /// Карточка события.
         case activity
-        /// Сетка истории и полоса полки.
-        case history
+        /// Раскрытая панель целиком: плеер, сетка истории, полка файлов и
+        /// нижняя полоса — календарь, погода, заряды устройств.
+        case expanded
 
         /// Начинается ли этот вид содержимого чёрной фигурой высотой челки.
         /// Список исчерпывающий намеренно: новый вид содержимого заставит
@@ -26,7 +27,7 @@ public struct PanelContent: Equatable, Sendable {
             // Фигура чёрная целиком: и полоса сверху, и тело под ней.
             case .hint, .activity: return true
             // Полоса сверху чёрная, стекло достаётся содержимому ниже.
-            case .history: return true
+            case .expanded: return true
             }
         }
     }
@@ -90,7 +91,7 @@ public struct PanelPresentation: Equatable, Sendable {
     private static func content(state: PanelState, event: ActivityEvent?) -> PanelContent {
         switch state {
         case .expanded:
-            return PanelContent(kind: .history)
+            return PanelContent(kind: .expanded)
         case .activity:
             guard let event else { return PanelContent(kind: .hint) }
             return PanelContent(kind: .activity, eventID: event.id)

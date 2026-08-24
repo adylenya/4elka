@@ -42,7 +42,7 @@ private func card(_ kind: ActivityEvent.Kind = .clipboard) -> ActivityEvent {
     // выбрал «Показать панель», и следующий тик таймера подменял сетку истории
     // чёрной фигурой карточки — навсегда.
     let p = PanelPresentation.make(state: .expanded, event: card(), geometry: measured)
-    #expect(p.content.kind == .history)
+    #expect(p.content.kind == .expanded)
     #expect(p.content.eventID == nil)
 }
 
@@ -154,6 +154,24 @@ private func makePresenter() -> (PanelPresenter, FakePanel, FakeTrigger) {
     #expect(panel.presentedContents == 1)
     presenter.apply(PanelPresentation.make(state: .expanded, event: event, geometry: measured))
     #expect(panel.presentedContents == 2)
+}
+
+@MainActor
+@Test func reopeningTheExpandedPanelBuildsItsContentAgain() {
+    // Календарь сбрасывается на текущий месяц именно этим: содержимое
+    // раскрытой панели собирается заново на каждое раскрытие. Если бы
+    // предъявитель признал его прежним, панель открывалась бы на том месяце,
+    // куда в прошлый раз ушли стрелками, — а правило обратное.
+    let panel = FakePanel()
+    var built: [PanelContent.Kind] = []
+    let presenter = PanelPresenter(panel: panel, trigger: nil, content: { content in
+        built.append(content.kind)
+        return NSView()
+    })
+    presenter.apply(PanelPresentation.make(state: .expanded, event: nil, geometry: measured))
+    presenter.apply(PanelPresentation.make(state: .hidden, event: nil, geometry: measured))
+    presenter.apply(PanelPresentation.make(state: .expanded, event: nil, geometry: measured))
+    #expect(built.filter { $0 == .expanded }.count == 2)
 }
 
 @MainActor

@@ -42,7 +42,9 @@ public struct NotchContinuationFigure<Content: View>: View {
 /// виден рабочий стол. Полоса их накрывает, и стык читается как единая фигура.
 ///
 /// Слева и справа от выреза внутри полосы зарезервировано место под короткое
-/// (время, погода, заряд) — подключить туда виджеты отдельная задача.
+/// (время, погода, заряд). Раскрытая панель им не пользуется намеренно: строка
+/// высотой с челку читается плохо, а всё, что стоит показывать, уже лежит в
+/// теле — плеер, погода и заряды. Крылья остаются под будущее короткое.
 public struct NotchToppedPanel<Content: View>: View {
     private let geometry: NotchGeometry
     private let content: Content
@@ -93,34 +95,6 @@ public struct PeekHintView: View {
                     .position(x: layout.body.midX,
                               y: proxy.size.height - layout.body.midY)
             }
-        }
-    }
-}
-
-/// Сетка истории и полоса полки под ней. Место под челкой ей уже отдано
-/// `NotchToppedPanel`, поэтому раскладку внутри себя она не считает и занимает
-/// всё стекло целиком. Крылья слева и справа от челки ей не отдаются: плитка в
-/// полосе высотой с челку не читается.
-public struct HistoryPanelContent: View {
-    private let coordinator: ClipboardCoordinator
-    private let blobs: BlobStore
-    private let shelf: ShelfCoordinator
-    private let onClose: () -> Void
-
-    public init(coordinator: ClipboardCoordinator, blobs: BlobStore,
-                shelf: ShelfCoordinator, onClose: @escaping () -> Void) {
-        self.coordinator = coordinator
-        self.blobs = blobs
-        self.shelf = shelf
-        self.onClose = onClose
-    }
-
-    public var body: some View {
-        VStack(spacing: 0) {
-            HistoryGridView(coordinator: coordinator, blobs: blobs, onClose: onClose)
-            ShelfView(coordinator: shelf)
-                .padding(.horizontal, Config.HistoryGrid.padding)
-                .padding(.bottom, Config.HistoryGrid.padding)
         }
     }
 }
