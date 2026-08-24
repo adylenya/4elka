@@ -28,6 +28,14 @@ struct BehaviorSettingsSection: View {
                     Text(choice.displayName).tag(choice.id)
                 }
             }
+            // Отказ регистрации — рядом с выбором, а не в системном журнале:
+            // человек, у которого сочетание занято Alfred или Raycast, иначе
+            // просто жмёт и не понимает, почему тихо.
+            if let failure = actions.hotkeyFailure() {
+                Label(failure.message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             Toggle("Открывать по наведению", isOn: controller.binding(\.opensOnHover))
             Text("Выключено — панель открывается только по клику по челке или " +
                  "комбинацией клавиш.")

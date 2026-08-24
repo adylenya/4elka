@@ -5,15 +5,25 @@ import SwiftUI
 /// у системной службы). Окно их только зовёт.
 public struct SettingsActions {
     public let clearHistory: () -> Void
+    /// Отказ регистрации сочетания или `nil`, если оно за нами. Замыкание, а
+    /// не значение: отказ становится известен при постановке хоткея, то есть
+    /// уже после сборки окна, а показать его надо в разделе «Поведение».
+    ///
+    /// Без значения по умолчанию сознательно: `{ nil }` по умолчанию означал бы
+    /// «молча ничего не показывать», а это ровно та беда, из которой выросла
+    /// вся задача.
+    public let hotkeyFailure: () -> HotkeyFailure?
     public let isLaunchAtLoginEnabled: () -> Bool
     public let toggleLaunchAtLogin: () -> Void
     public let revealDataFolder: () -> Void
 
     public init(clearHistory: @escaping () -> Void,
+                hotkeyFailure: @escaping () -> HotkeyFailure?,
                 isLaunchAtLoginEnabled: @escaping () -> Bool,
                 toggleLaunchAtLogin: @escaping () -> Void,
                 revealDataFolder: @escaping () -> Void) {
         self.clearHistory = clearHistory
+        self.hotkeyFailure = hotkeyFailure
         self.isLaunchAtLoginEnabled = isLaunchAtLoginEnabled
         self.toggleLaunchAtLogin = toggleLaunchAtLogin
         self.revealDataFolder = revealDataFolder
@@ -28,6 +38,12 @@ public struct SettingsActions {
 /// элементы управления, пояснения идут семантическим `.secondary`. Выбора
 /// темы в окне нет и быть не должно — переключение светлая/тёмная достаётся
 /// от системы бесплатно.
+///
+/// Единственное исключение — сообщение об отказе регистрации сочетания: оно
+/// идёт системным `.orange` со значком предупреждения. Серым его не замечают,
+/// а это ровно тот случай, когда человек обязан заметить: иначе он жмёт
+/// сочетание, ничего не происходит, и узнать причину можно только из
+/// `Console.app`.
 ///
 /// Сохранение — при каждом изменении, через `SettingsController.update`,
 /// который прогоняет значение через `sanitized()` и пишет файл атомарно.

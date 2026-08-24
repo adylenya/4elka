@@ -201,6 +201,11 @@ public extension Settings {
 
     var hotkeyDisplayName: String { hotkeyChoice.displayName }
 
+    /// Сочетание в том виде, в каком его принимает Carbon. Через `hotkeyChoice`,
+    /// а не своим переводом чисел: два независимых перевода одного и того же
+    /// сочетания в этом проекте уже расходились один раз.
+    var hotkeyCombo: HotkeyCombo { hotkeyChoice.combo }
+
     /// Новый экземпляр с этой комбинацией. Копированием, а не правкой себя.
     func choosing(_ hotkey: HotkeyChoice) -> Settings {
         var next = self

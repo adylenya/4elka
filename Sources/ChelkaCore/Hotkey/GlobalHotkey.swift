@@ -43,6 +43,10 @@ public struct HotkeyCombo: Equatable, Sendable {
 /// `RegisterEventHotKey` не требует никаких разрешений вовсе — приложение
 /// получает только своё сочетание и ничего больше не подслушивает.
 ///
+/// Одна регистрация на экземпляр. Кто и когда её ставит, кто снимает прежнюю
+/// при смене сочетания и кто показывает отказ человеку — забота
+/// `HotkeyRegistry`: здесь только разговор с Carbon.
+///
 /// Класс живёт на главном акторе: регистрация трогает событийную цель
 /// приложения, а обработчик в итоге двигает окно панели. Обработчик Carbon
 /// приходит через C-указатель на функцию, про который компилятор ничего не
@@ -69,10 +73,17 @@ public final class GlobalHotkey {
         self.handler = handler
     }
 
-    /// `false` означает «сочетание занято» (в том числе нами же) — вызывающий
-    /// обязан сказать об этом человеку, а не промолчать.
-    public func register() -> Bool {
-        guard hotKeyRef == nil else { return false }
+    /// `nil` означает «получилось». Иначе — причина отказа: вызывающий обязан
+    /// сказать о ней человеку, а не промолчать.
+    ///
+    /// Причина, а не `false`: отказ приходит и когда сочетание занято чужим
+    /// приложением, и когда этот же экземпляр уже зарегистрирован, а раньше
+    /// на оба случая печаталось «занято другим приложением» — то есть текст
+    /// мог врать.
+    public func register() -> HotkeyFailure? {
+        guard hotKeyRef == nil else {
+            return HotkeyFailure(combo: combo, reason: .alreadyRegistered)
+        }
         Self.installDispatcherIfNeeded()
 
         let identifier = Self.nextIdentifier
@@ -80,13 +91,18 @@ public final class GlobalHotkey {
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, eventID,
                                         GetApplicationEventTarget(), 0, &ref)
-        guard status == noErr, let ref else { return false }
+        guard status == noErr, let ref else {
+            let reason: HotkeyFailure.Reason = status == eventHotKeyExistsErr
+                ? .comboTaken
+                : .systemRefused(status)
+            return HotkeyFailure(combo: combo, reason: reason)
+        }
 
         Self.nextIdentifier += 1
         hotKeyRef = ref
         self.identifier = identifier
         Self.handlers[identifier] = handler
-        return true
+        return nil
     }
 
     /// Идемпотентна: снимать несуществующую регистрацию безопасно.
@@ -101,22 +117,6 @@ public final class GlobalHotkey {
     /// снятую регистрацию не находит обработчика и тихо ничего не делает.
     static func dispatch(_ identifier: UInt32) {
         handlers[identifier]?()
-    }
-
-    /// Создать и сразу зарегистрировать сочетание. `nil` означает, что
-    /// сочетание занято и хоткея у приложения нет: молчать про это нельзя,
-    /// иначе непонятно, почему нажатие ничего не делает, — поэтому пишем в лог.
-    /// Живёт здесь, а не в делегате приложения: тому положено только создать
-    /// хоткей при старте и снять при выходе.
-    public static func installed(combo: HotkeyCombo = .defaultToggle,
-                                 handler: @escaping () -> Void) -> GlobalHotkey? {
-        let hotkey = GlobalHotkey(combo: combo, handler: handler)
-        guard hotkey.register() else {
-            NSLog("4elka: сочетание %@ занято другим приложением — панель по нему не откроется",
-                  combo.displayName)
-            return nil
-        }
-        return hotkey
     }
 
     private static func installDispatcherIfNeeded() {
@@ -138,3 +138,7 @@ public final class GlobalHotkey {
         }, 1, &spec, nil, &dispatcher)
     }
 }
+
+/// Регистрация настоящая — та, что уходит в Carbon. Подделка с тем же
+/// протоколом живёт в тестах распорядителя.
+extension GlobalHotkey: HotkeyRegistering {}
