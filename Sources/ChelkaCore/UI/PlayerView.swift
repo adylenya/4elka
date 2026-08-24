@@ -14,45 +14,76 @@ import SwiftUI
 /// отображения (`TimelineView`), а не отдельное состояние, которое пришлось бы
 /// пересчитывать и публиковать самому.
 ///
-/// Если источник недоступен или ничего не играет — строка «ничего не играет»,
-/// а не пустое место: пустота выглядит как поломка.
+/// Если играть нечему — строка вместо пустого места: пустота выглядит как
+/// поломка. Строки две и они разные: «плеер недоступен» значит «адаптера нет
+/// или он сдался», «ничего не играет» — «плеер жив, музыки нет». Одна строка на
+/// оба случая скрывала бы полностью мёртвую подсистему за безобидной надписью,
+/// а именно так плеер и прожил свою первую неделю.
 public struct PlayerView: View {
     @ObservedObject private var coordinator: MediaCoordinator
     /// Состояние панели нужно ровно за одним: решить, тикать ли полосе позиции.
     private let panel: PanelState
 
-    public init(coordinator: MediaCoordinator, panel: PanelState) {
+    /// Что показывать — замыканием, а не значением: тумблеры «Показывать
+    /// обложку» и «Показывать полосу позиции» человек крутит в отдельном окне, и
+    /// снятая при сборке копия отстала бы от него до следующего раскрытия.
+    private let options: () -> PlayerOptions
+
+    public init(coordinator: MediaCoordinator, panel: PanelState,
+                options: @escaping () -> PlayerOptions) {
         self.coordinator = coordinator
         self.panel = panel
+        self.options = options
     }
 
     /// Тикает полоса позиции или стоит.
     ///
     /// Двигать её надо только когда есть что двигать: на паузе позиция стоит на
-    /// месте, а при закрытой панели её вообще никто не видит. Приложение живёт в
-    /// челке целый день, и таймер два раза в секунду впустую — это батарея.
+    /// месте, при закрытой панели её вообще никто не видит, а выключенную
+    /// настройкой полосу двигать тем более незачем. Приложение живёт в челке
+    /// целый день, и таймер два раза в секунду впустую — это батарея.
     ///
     /// `nonisolated`, потому что это чистая функция от параметров: `self` она не
     /// трогает, и изоляция вьюхи на главный актор ей не нужна — иначе тест не
     /// смог бы позвать её без него.
-    public nonisolated static func shouldTickPosition(isPlaying: Bool, panel: PanelState) -> Bool {
-        isPlaying && panel == .expanded
+    public nonisolated static func shouldTickPosition(isPlaying: Bool, panel: PanelState,
+                                                      showsPositionBar: Bool) -> Bool {
+        isPlaying && panel == .expanded && showsPositionBar
     }
 
     public var body: some View {
         Group {
-            if coordinator.isAvailable, !coordinator.state.isEmpty {
+            switch presence {
+            case .playing:
                 player
-            } else {
-                Text("ничего не играет")
-                    .foregroundStyle(.secondary)
+            case .unavailable:
+                placeholder(PanelPlaceholder.playerUnavailable)
+            case .idle:
+                placeholder(PanelPlaceholder.playerIdle)
             }
         }
     }
 
+    private var presence: PlayerPresence {
+        PlayerPresence.make(isAvailable: coordinator.isAvailable,
+                            isEmpty: coordinator.state.isEmpty)
+    }
+
+    /// Заглушка занимает то же место, что и сам плеер: раздел не имеет права
+    /// схлопываться, иначе всё, что ниже, подпрыгивает при смене трека.
+    private func placeholder(_ text: String) -> some View {
+        HStack {
+            Text(text)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
     private var player: some View {
         Group {
-            if Self.shouldTickPosition(isPlaying: coordinator.state.isPlaying, panel: panel) {
+            if Self.shouldTickPosition(isPlaying: coordinator.state.isPlaying, panel: panel,
+                                       showsPositionBar: options().showsPositionBar) {
                 TimelineView(.periodic(from: .now, by: Config.Media.positionTickInterval)) { timeline in
                     row(at: timeline.date)
                 }
@@ -65,9 +96,11 @@ public struct PlayerView: View {
     }
 
     private func row(at now: Date) -> some View {
-        HStack(spacing: 12) {
-            artworkView
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: Config.Media.rowSpacing) {
+            // Обложку можно выключить настройкой: место под неё тогда не
+            // занимается вовсе, а название с кнопками занимают всю строку.
+            if options().showsArtwork { artworkView }
+            VStack(alignment: .leading, spacing: Config.Media.textSpacing) {
                 // Строки берутся из `displayLines`: пустое название не должно
                 // давать пустую первую строку, а исполнитель без названия не
                 // должен дублироваться во второй.
@@ -81,7 +114,7 @@ public struct PlayerView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                positionBar(at: now)
+                if options().showsPositionBar { positionBar(at: now) }
             }
             controls
         }
@@ -94,12 +127,12 @@ public struct PlayerView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             } else {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: Config.Media.artworkCornerRadius)
                     .fill(.quaternary)
             }
         }
         .frame(width: Config.Media.artworkSide, height: Config.Media.artworkSide)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: Config.Media.artworkCornerRadius))
     }
 
     /// Длительность трека не всегда известна — тогда полоса рисуется пустой
@@ -110,7 +143,7 @@ public struct PlayerView: View {
         // Отсутствующая или нулевая длительность — не повод гадать долю от
         // неизвестного целого: полоса рисуется пустой, а не наугад.
         let duration = coordinator.state.duration.flatMap { $0 > 0 ? $0 : nil }
-        return VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .leading, spacing: Config.Media.positionLabelSpacing) {
             ProgressView(value: duration != nil ? position : 0, total: duration ?? 1)
                 .tint(.accentColor)
             HStack {
@@ -124,7 +157,7 @@ public struct PlayerView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Config.Media.controlSpacing) {
             Button(action: { coordinator.send(.previous) }) {
                 Image(systemName: "backward.fill")
             }

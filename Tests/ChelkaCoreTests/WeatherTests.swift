@@ -38,12 +38,59 @@ private let now = Date(timeIntervalSince1970: 10_000)
     #expect(snapshot.summary == "21°")
 }
 
-@MainActor
-@Test func requestURLCarriesAstanaCoordinates() {
-    let url = WeatherProvider.requestURL.absoluteString
+@Test func requestURLCarriesAstanaCoordinatesByDefault() {
+    let url = WeatherProvider.requestURL(for: .defaults).absoluteString
     #expect(url.contains("latitude=51.1605"))
     #expect(url.contains("longitude=71.4704"))
     #expect(url.contains("Asia/Almaty"))
+}
+
+/// Город, выбранный в настройках, обязан доходить до запроса. Раньше запрос
+/// собирался из `Config` и был статическим: человек выбирал Алматы, значение
+/// честно ложилось в `settings.json` и не меняло ничего.
+@Test func cityChosenInSettingsReachesTheRequest() {
+    let almaty = City(name: "Алматы", latitude: 43.2389, longitude: 76.8897)
+    let settings = Settings.defaults.choosing(almaty)
+    let url = WeatherProvider.requestURL(for: settings.weather).absoluteString
+    #expect(url.contains("latitude=43.2389"))
+    #expect(url.contains("longitude=76.8897"))
+}
+
+/// Интервал обновления живёт в уже заведённом таймере, поэтому смена значения
+/// обязана его перезавести — иначе новое «раз в минуту» вступает в силу только
+/// после перезапуска приложения.
+@MainActor
+@Test func refreshIntervalFromSettingsAppliesWithoutRestart() {
+    final class Box { var value = Settings.defaults }
+    let box = Box()
+    let provider = WeatherProvider(
+        cacheURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("interval-\(UUID().uuidString).json"),
+        settings: { box.value.weather },
+        fetch: { _ in throw CancellationError() })
+    provider.start()
+    #expect(provider.timerInterval == Config.Weather.refreshInterval)
+
+    box.value.weatherRefreshMinutes = 1
+    provider.settingsChanged()
+    #expect(provider.timerInterval == Config.secondsInMinute)
+    provider.stop()
+}
+
+/// Порог устаревания тоже из настроек: при пороге в сутки трёхчасовая погода
+/// свежая, при пороге в час — уже с пометкой.
+@Test func staleThresholdFromSettingsDecidesTheAgeLabel() {
+    let snapshot = try! #require(WeatherSnapshot.decode(
+        Data(#"{"current":{"temperature_2m":5,"apparent_temperature":3,"weather_code":1,"wind_speed_10m":2}}"#.utf8),
+        now: now))
+    var patient = Settings.defaults
+    patient.weatherStaleMinutes = 24 * 60
+    #expect(snapshot.ageDescription(now: now.addingTimeInterval(3 * 3600),
+                                    staleAfter: patient.weather.staleAfter) == nil)
+    var strict = Settings.defaults
+    strict.weatherStaleMinutes = 1
+    #expect(snapshot.ageDescription(now: now.addingTimeInterval(3 * 3600),
+                                    staleAfter: strict.weather.staleAfter) == "3 ч назад")
 }
 
 @MainActor

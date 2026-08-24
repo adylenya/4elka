@@ -32,6 +32,11 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     private var pasteboardWatcher: PasteboardWatcher?
     private var activityTimer: Timer?
 
+    /// Плеер, заряды устройств и погода. Собраны в `ServiceContainer`, а не по
+    /// месту здесь: делегат и без них велик, а «плеер поднимается один раз» и
+    /// «мост гасится при выходе» иначе жили бы в разных его концах.
+    private var services: ServiceContainer?
+
     /// Единственный владелец настроек на всё приложение. Подсистемы читают
     /// значения отсюда замыканиями, а не копируют их себе при создании: иначе
     /// правка в открытом окне не доходила бы до них до перезапуска.
@@ -58,6 +63,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
 
         setUpShelf()
         setUpClipboard()
+        setUpServices()
         setUpWindows()
 
         // Пересчёт геометрии на смену экрана, разрешения и масштаба. Без него
@@ -84,6 +90,12 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     /// отложена на секунду, чтобы серия копирований не перезаписывала файл пять
     /// раз в секунду; всё, что попало в это окно, живёт только в памяти и без
     /// сброса пропало бы вместе с процессом.
+    /// Отдельная строка про плеер: процесс адаптера — чужой долгоживущий
+    /// процесс perl. Замерено: он переживает смерть хозяина и умирает лишь при
+    /// следующей попытке записи в закрытую трубу — то есть висит, пока не
+    /// сменится трек, а на паузе неограниченно долго. Уборка брошенных
+    /// процессов при старте моста (`AdapterOrphans`) — страховка на случай
+    /// `kill -9`, а не замена вежливому завершению.
     public func applicationWillTerminate(_ notification: Notification) {
         panelHotkey?.unregister()
         panelHotkey = nil
@@ -92,6 +104,7 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         pasteboardWatcher?.stop()
         screenWatcher?.stop()
         screenWatcher = nil
+        services?.stop()
         clipboardCoordinator?.flush()
     }
 
@@ -193,11 +206,14 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
             return hosting(ActivityFigureContent(event: event,
                                                  image: thumbnail(for: event),
                                                  geometry: geometry))
-        case .history:
-            guard let coordinator = clipboardCoordinator, let blobs, let shelf else { return nil }
+        case .expanded:
+            guard let coordinator = clipboardCoordinator, let blobs, let shelf,
+                  let services else { return nil }
             return hosting(NotchToppedPanel(geometry: geometry) {
-                HistoryPanelContent(coordinator: coordinator, blobs: blobs, shelf: shelf,
-                                    onClose: { [weak self] in self?.dismissPanelSoon() })
+                ExpandedPanelContent(coordinator: coordinator, blobs: blobs, shelf: shelf,
+                                     services: services, panel: machine.state,
+                                     calendar: settingsController.settings.monthCalendar,
+                                     onClose: { [weak self] in self?.dismissPanelSoon() })
             })
         }
     }
@@ -245,6 +261,19 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
         // на главной очереди: том может быть сетевым. Панель поднимется
         // сразу, полка догрузится через мгновение.
         Task { await coordinator.load() }
+    }
+
+    /// Плеер, заряды и погода. Запускаются ЗДЕСЬ, один раз при старте, а не при
+    /// раскрытии панели: поток адаптера — долгоживущий процесс perl, и
+    /// перезапуск его на каждое раскрытие означал бы новый процесс несколько раз
+    /// в минуту. Заряды и погода по той же причине: их таймеры не должны
+    /// заводиться заново от каждого взгляда на панель.
+    private func setUpServices() {
+        let container = ServiceContainer.live(
+            settings: { [weak self] in self?.settingsController.settings ?? .defaults },
+            submitActivity: { [weak self] event in self?.submitActivity(event) })
+        services = container
+        container.start()
     }
 
     private func setUpClipboard() {
@@ -335,6 +364,9 @@ public final class ChelkaAppDelegate: NSObject, NSApplicationDelegate {
     /// означало бы «сколько хранить» вступает в силу неизвестно когда.
     private func settingsChanged(_ settings: Settings) {
         clipboardCoordinator?.applyQuotas(settings.historyQuotas)
+        // Интервал обновления погоды живёт в уже заведённом таймере: без этого
+        // «раз в минуту» вступало бы в силу только после перезапуска.
+        services?.settingsChanged()
     }
 
     /// Действия для окна настроек: сама вьюха ни истории, ни системной службы

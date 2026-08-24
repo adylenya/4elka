@@ -20,7 +20,7 @@ public struct MonthView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Config.Calendar.sectionSpacing) {
             header
             weekdayRow
             weeksColumn
@@ -31,7 +31,7 @@ public struct MonthView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: Config.Calendar.rowSpacing) {
             Button(action: { shift(by: -1) }) {
                 Image(systemName: "chevron.left")
             }
@@ -43,6 +43,7 @@ public struct MonthView: View {
             Text("\(grid.monthName) \(String(grid.year))")
                 .font(.headline)
                 .foregroundStyle(.primary)
+                .lineLimit(1)
 
             Spacer()
 
@@ -52,6 +53,10 @@ public struct MonthView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
+        // Высота заголовка задана, а не выведена из шрифта: из неё считается
+        // высота нижней полосы панели, и она не должна зависеть от того, во
+        // сколько строк лёг «СЕНТЯБРЬ 2026» на этой конкретной машине.
+        .frame(height: Config.Calendar.headerHeight)
     }
 
     private var weekdayRow: some View {
@@ -63,10 +68,11 @@ public struct MonthView: View {
                     .frame(maxWidth: .infinity)
             }
         }
+        .frame(height: Config.Calendar.weekdayRowHeight)
     }
 
     private var weeksColumn: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: Config.Calendar.rowSpacing) {
             ForEach(Array(grid.weeks.enumerated()), id: \.offset) { _, week in
                 HStack(spacing: 0) {
                     ForEach(Array(week.enumerated()), id: \.offset) { _, day in
@@ -85,7 +91,8 @@ public struct MonthView: View {
             if let day, day.isToday {
                 Circle()
                     .fill(Color.accentColor)
-                    .frame(width: 24, height: 24)
+                    .frame(width: Config.Calendar.todayCircleSide,
+                           height: Config.Calendar.todayCircleSide)
             }
             if let day {
                 Text("\(day.number)")
@@ -93,7 +100,7 @@ public struct MonthView: View {
                     .foregroundStyle(day.isWeekend ? .secondary : .primary)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 28)
+        .frame(maxWidth: .infinity, minHeight: Config.Calendar.dayCellHeight)
     }
 
     private func shift(by months: Int) {

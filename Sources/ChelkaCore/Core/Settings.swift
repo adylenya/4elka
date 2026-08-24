@@ -154,6 +154,39 @@ public extension Settings {
     /// Первый день недели или `nil`, если он берётся из системы.
     var calendarFirstWeekday: Int? { firstWeekdayFollowsSystem ? nil : firstWeekday }
 
+    /// Календарь, которым рисуется сетка месяца: системный, но с первым днём
+    /// недели из настроек, когда человек задал его руками. «По системе» — это
+    /// отсутствие своего значения, а не его копия: иначе смена региона в
+    /// системных настройках перестала бы доходить до календаря.
+    var monthCalendar: Foundation.Calendar {
+        var calendar = Foundation.Calendar.current
+        if let first = calendarFirstWeekday { calendar.firstWeekday = first }
+        return calendar
+    }
+
+    /// Что нужно погоде: координаты выбранного города, интервал обновления и
+    /// порог устаревания. Без этого раздел «Погода» в окне настроек только
+    /// сохранял бы значения в файл, ничего ими не меняя.
+    var weather: WeatherSettings {
+        WeatherSettings(latitude: weatherLatitude,
+                        longitude: weatherLongitude,
+                        refreshInterval: weatherRefreshInterval,
+                        staleAfter: weatherStaleAfter)
+    }
+
+    /// Что показывать в плеере: обложку, полосу позиции.
+    var playerOptions: PlayerOptions {
+        PlayerOptions(showsArtwork: showsArtwork, showsPositionBar: showsPositionBar)
+    }
+
+    /// Пороги, на которых выезжают карточки о заряде. «Заряжен» — это сотня, и
+    /// в настройках его нет: крутить там нечего.
+    var batteryThresholds: BatteryThresholds {
+        BatteryThresholds(low: batteryLow, high: batteryHigh,
+                          full: Config.Battery.fullThreshold,
+                          hysteresis: batteryHysteresis)
+    }
+
     func allowsCard(_ kind: ActivityEvent.Kind) -> Bool {
         switch kind {
         case .track: return cardsFromTrack

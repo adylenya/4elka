@@ -13,6 +13,9 @@ public enum AppPaths {
     /// хранилище со своим смыслом жизни элемента.
     public static var shelf: URL { support.appendingPathComponent("shelf.json") }
     public static var settings: URL { support.appendingPathComponent("settings.json") }
+    /// Последняя погода. Кэш, а не данные: сети нет — показываем вчерашние
+    /// градусы с пометкой возраста, а не прочерк.
+    public static var weather: URL { support.appendingPathComponent("weather.json") }
     public static var dragTemp: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("4elka-drag", isDirectory: true)
     }
