@@ -36,6 +36,10 @@ public struct WeatherView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        // Место в нижней полосе есть — вправо от календаря места хватает и
+        // на погоду, и на заряды, но без этого вьюха занимала только свою
+        // собственную минимальную ширину, а справа оставалась пустота.
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func current(_ snapshot: WeatherSnapshot) -> some View {
@@ -64,7 +68,10 @@ public struct WeatherView: View {
     /// `Config.Weather.forecastHours` на стороне запроса — вьюха просто
     /// рисует то, что пришло, и не считает, сколько показывать.
     private func upcoming(_ hours: [WeatherSnapshot.HourlyForecast]) -> some View {
-        HStack(spacing: 10) {
+        // Каждый час — равная доля доступной ширины, а не кучка слева с
+        // пустотой справа: ряд обязан растянуться на всю строку, как ряды
+        // календаря рядом с ним.
+        HStack(spacing: 0) {
             ForEach(hours, id: \.hour) { point in
                 VStack(spacing: 1) {
                     Text(point.hour)
@@ -77,6 +84,7 @@ public struct WeatherView: View {
                         .font(.caption2)
                         .foregroundStyle(.primary)
                 }
+                .frame(maxWidth: .infinity)
             }
         }
     }
