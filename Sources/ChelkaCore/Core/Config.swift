@@ -87,6 +87,60 @@ public enum Config {
         public static let textLineLimit = 2
         /// Сторона иконки файла на плитке.
         public static let fileIconSide: CGFloat = 40
+        /// Высота строки поиска над сеткой.
+        public static let searchRowHeight: CGFloat = 24
+        /// Высота полосы вкладок («всё», «снимки», «файлы»).
+        public static let tabRowHeight: CGFloat = 24
+        /// Минимум, при котором в сетке видна хотя бы одна строка плиток:
+        /// поиск, вкладки, строка плиток и зазоры между ними. Выведен из тех же
+        /// констант, которыми рисует вью, а не перепечатан числом.
+        public static let minHeight = searchRowHeight + tabRowHeight + tileSide
+            + rowSpacing * 2 + padding * 2
+    }
+
+    /// Раскрытая панель: из чего складывается её содержимое. Разделы лежат
+    /// друг под другом — плеер, сетка истории, полка, нижняя полоса
+    /// (календарь, погода, заряды).
+    public enum Panel {
+        /// Зазор между разделами.
+        public static let sectionSpacing: CGFloat = 10
+        /// Сколько разделов лежит друг под другом. Зазоров между ними на один
+        /// меньше — отсюда и считается общая высота.
+        public static let verticalSections = 4
+        /// Высота строки плеера: обложка плюс отступы над и под ней.
+        public static let playerHeight = Config.Media.artworkSide
+            + Config.HistoryGrid.padding * 2
+        /// Ширина календаря в нижней полосе: семь клеток дня плюс отступы.
+        /// Остальное место полосы достаётся погоде и зарядам.
+        public static let calendarWidth = Config.Calendar.dayCellHeight * 8
+            + Config.HistoryGrid.padding * 2
+        /// Высота нижней полосы — по самой высокой сетке месяца: месяц из 31
+        /// дня, начинающийся в последний день недели, даёт шесть строк.
+        public static let bottomBarHeight = Config.Calendar.gridHeight
+            + Config.Calendar.headerHeight + Config.Calendar.weekdayRowHeight
+            + Config.Calendar.sectionSpacing * 2
+        /// Ширина содержимого раскрытой панели. Считается от сетки истории:
+        /// семь плиток в строку и отступы по краям.
+        public static let contentWidth = Config.HistoryGrid.tileSide * 7
+            + Config.HistoryGrid.tileSpacing * 6
+            + Config.HistoryGrid.padding * 2
+        /// Отступ содержимого от верхнего и нижнего края стекла. Учитывается в
+        /// общей высоте: не учтённый, он отбирал место у сетки истории, и нижняя
+        /// строка плиток обрезалась.
+        public static let verticalPadding = Config.HistoryGrid.padding
+        /// Высота содержимого — сумма разделов, зазоров между ними и отступов по
+        /// краям, а не круглое число: круглое (340) не вмещало ни плеер, ни
+        /// нижнюю полосу.
+        public static let contentHeight = playerHeight + Config.HistoryGrid.minHeight
+            + Config.Shelf.stripHeight + bottomBarHeight
+            + sectionSpacing * CGFloat(verticalSections - 1)
+            + verticalPadding * 2
+        /// Зазор между строками в правой части нижней полосы: погода, заряды.
+        public static let rowSpacing: CGFloat = 6
+        /// Ширина колонки со значком устройства в списке зарядов: значки разной
+        /// ширины (наушники шире айфона), и без общей колонки проценты справа
+        /// прыгали бы от строки к строке.
+        public static let deviceSymbolWidth: CGFloat = 22
     }
 
     /// Полка файлов: полоса в раскрытой панели и подсветка зоны приёма.
@@ -193,6 +247,25 @@ public enum Config {
     /// где 1 — воскресенье).
     public enum Calendar {
         public static let manualFirstWeekday = 2
+        /// Высота клетки дня в сетке месяца.
+        public static let dayCellHeight: CGFloat = 28
+        /// Диаметр кружка под сегодняшним числом. Меньше клетки: круг рисуется
+        /// фиксированного размера, иначе он растянулся бы в эллипс по ширине.
+        public static let todayCircleSide: CGFloat = 24
+        /// Зазор между строками недель.
+        public static let rowSpacing: CGFloat = 4
+        /// Зазор между заголовком месяца, строкой дней недели и сеткой.
+        public static let sectionSpacing: CGFloat = 8
+        /// Больше шести строк в месяце не бывает: 31 день, начинающийся в
+        /// последний день недели, занимает ровно шесть.
+        public static let maxWeeks = 6
+        /// Высота заголовка со названием месяца и стрелками.
+        public static let headerHeight: CGFloat = 22
+        /// Высота строки с буквами дней недели.
+        public static let weekdayRowHeight: CGFloat = 16
+        /// Высота самой сетки при полных шести строках.
+        public static let gridHeight = CGFloat(maxWeeks) * dayCellHeight
+            + CGFloat(maxWeeks - 1) * rowSpacing
     }
 
     /// Плеер в раскрытой панели: что показывать по умолчанию.
@@ -286,7 +359,12 @@ public enum Config {
         /// Полную высоту окна считает `PanelFrames`: к этому числу прибавляется
         /// высота челки. Раньше это была полная высота, вырез съедал из неё
         /// 38 точек, и сетку истории обрезало нижним краем.
-        public static let expandedSize = CGSize(width: 640, height: 340)
+        ///
+        /// Складывается из разделов (`Config.Panel`), а не стоит круглым числом:
+        /// круглое (640×340) вмещало только сетку истории и полку — плеер и
+        /// нижнюю полосу с календарём, погодой и зарядами обрезало нижним краем.
+        public static let expandedSize = CGSize(width: Config.Panel.contentWidth,
+                                                height: Config.Panel.contentHeight)
         /// Высота подсказки, выезжающей из-под челки при наведении. Раньше
         /// наведение просило размером ровно вырез — тело выходило нулевой
         /// высоты, и состояние наведения не показывало ничего.
@@ -325,6 +403,16 @@ public enum Config {
         public static let positionTickInterval: TimeInterval = 0.5
         /// Сторона обложки в плеере.
         public static let artworkSide: CGFloat = 56
+        /// Скругление обложки.
+        public static let artworkCornerRadius: CGFloat = 6
+        /// Зазор между обложкой, текстом и кнопками в строке плеера.
+        public static let rowSpacing: CGFloat = 12
+        /// Зазор между названием, исполнителем и полосой позиции.
+        public static let textSpacing: CGFloat = 4
+        /// Зазор между полосой позиции и метками времени под ней.
+        public static let positionLabelSpacing: CGFloat = 2
+        /// Зазор между кнопками управления.
+        public static let controlSpacing: CGFloat = 8
         /// Поток без единого перевода строки — либо баг адаптера, либо чужая
         /// поломка. Не даём НЕДОСОБРАННОМУ остатку расти неограниченно в
         /// ожидании перевода строки. Целые строки порогом не режутся вовсе:

@@ -85,3 +85,42 @@ import Foundation
     #expect(PlainText.strip(nil, fallback: "запас") == "запас")
     #expect(PlainText.strip(Data([0xFF, 0xFE]), fallback: "запас") == "запас")
 }
+
+@Test func timestampPinsItsLocaleSoForeignCalendarCannotShiftTheYear() {
+    // Формат фиксированный, значит и локаль обязана быть фиксированной. Проект
+    // эту ловушку уже знает и лечит в двух других местах, а здесь она осталась.
+    //
+    // Первые две проверки доказывают, что механизм вообще важен: с буддийским
+    // календарём тот же штамп даёт 2568 год вместо 2025. Без них третья проверка
+    // была бы утверждением ни о чём.
+    let buddhist = Locale(identifier: "th_TH@calendar=buddhist")
+    #expect(Transformations.timestampText(1_755_777_600, locale: buddhist).hasPrefix("2568-"))
+    #expect(Transformations.timestampText(1_755_777_600,
+                                          locale: Transformations.timestampLocale)
+            .hasPrefix("2025-"))
+    // А это — сама починка: вызывающая сторона обязана брать фиксированную локаль,
+    // а не системную. Регион «Таиланд» в системных настройках иначе превратит год.
+    #expect(Transformations.timestampLocale.identifier == "en_US_POSIX")
+}
+
+@Test func timestampShowsLocalTimeAndNamesItsZone() {
+    // Зашитая таймзона врала бы в любом городе, кроме одного: человек в Берлине
+    // разбирает штамп из лога и получает астанинское время без всякой пометки.
+    // Показываем местное время и подписываем зону — иначе дату не с чем сверить.
+    // Штамп свежий намеренно. На эпохе подпись зоны сравнивать не с чем:
+    // форматтер честно печатает историческое смещение (в 1970-м Алматы был
+    // GMT+6), а системная подпись зоны истории не знает и отдаёт нынешнее
+    // GMT+5. Расхождение — свойство системного типа, а не наш дефект.
+    let recent = "1755777600"
+    let text = Transformations.apply(.timestampToDate, to: recent) ?? ""
+    #expect(text.contains(TimeZone.current.abbreviation() ?? "—"))
+
+    // И показ того, что зона правда меняет результат: тот же штамп в двух зонах
+    // даёт разные часы. Без этого проверка выше ничего не значила бы.
+    let almaty = Transformations.timestampText(0, locale: Transformations.timestampLocale,
+                                               zone: TimeZone(identifier: "Asia/Almaty")!)
+    let utc = Transformations.timestampText(0, locale: Transformations.timestampLocale,
+                                            zone: TimeZone(identifier: "UTC")!)
+    #expect(almaty != utc)
+    #expect(utc.hasPrefix("1970-01-01 00:00:00"))
+}
