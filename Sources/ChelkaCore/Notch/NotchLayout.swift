@@ -37,33 +37,6 @@ public struct NotchLayout: Equatable, Sendable {
         contentHeight + (geometry.hasPhysicalNotch ? geometry.rect.height : 0)
     }
 
-    /// Насколько стекло раскрытой панели отступает от верха окна. Отступ
-    /// меньше высоты планки на её собственное скругление — так скруглённый
-    /// угол стекла прячется ЗА планкой, а не торчит прозрачной прорехой рядом.
-    public static func glassInset(geometry: NotchGeometry) -> CGFloat {
-        guard geometry.hasPhysicalNotch else { return 0 }
-        return max(0, geometry.rect.height - Config.Notch.cornerRadius)
-    }
-
-    /// Насколько содержимое ВНУТРИ стекла обязано отступить дополнительно —
-    /// сверх `glassInset` — чтобы не рисоваться в полосе, которую планка
-    /// ещё перекрывает сверху.
-    ///
-    /// Замерено на живом экране 24.08: `glassInset` уводит стекло вниз ровно
-    /// на «высота планки минус её скругление», и это верно для самого стекла
-    /// — его скруглённый угол и правда прячется за планкой. Но планка при
-    /// этом высотой в полную высоту челки, а не в `glassInset`. Содержимое,
-    /// нарисованное от края стекла без добавки, попадает в те самые точки
-    /// скругления, которые планка всё ещё закрывает: верх плеера (обложка,
-    /// заголовок трека) обрезался её нижним краем.
-    ///
-    /// `glassInset + glassContentInset` обязана равняться полной высоте
-    /// планки — это и проверяет тест, а не глаз.
-    public static func glassContentInset(geometry: NotchGeometry) -> CGFloat {
-        guard geometry.hasPhysicalNotch else { return 0 }
-        return geometry.rect.height - glassInset(geometry: geometry)
-    }
-
     /// Координаты внутри панели: начало слева снизу, как в AppKit.
     public static func inPanel(size: CGSize, geometry: NotchGeometry) -> NotchLayout {
         guard geometry.hasPhysicalNotch else {
