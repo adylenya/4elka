@@ -80,7 +80,13 @@ public final class MediaCoordinator: ObservableObject {
         lastTrackIdentity = new.trackIdentity
         lastPlaying = new.isPlaying
 
-        guard trackChanged || playingChanged, let event = Self.activityEvent(for: new) else { return }
+        guard trackChanged || playingChanged else { return }
+        // Смена трека приоритетнее: если сменился и трек, и состояние
+        // воспроизведения разом (переключили на паузе), новое имя — уже
+        // достаточная новость, а сообщать о паузе поверх нового трека
+        // только сбивает с толку.
+        let reason: MediaActivityReason = trackChanged ? .trackChanged : .playbackToggled
+        guard let event = Self.activityEvent(for: new, reason: reason) else { return }
         submitActivity(event)
     }
 
@@ -115,11 +121,34 @@ public final class MediaCoordinator: ObservableObject {
     /// `nonisolated`, потому что тест из брифа зовёт её синхронно без
     /// `@MainActor`: чистая функция от параметра, `self` не трогает, поэтому
     /// изоляция всего класса ей не нужна.
-    public nonisolated static func activityEvent(for state: NowPlaying) -> ActivityEvent? {
+    ///
+    /// Замерено владельцем на живой музыке: карточка на смену трека и на
+    /// паузу выглядела одинаково — заголовок и исполнитель — и по ней нельзя
+    /// было понять, что случилось. Смена трека остаётся информативной сама
+    /// по себе: новое имя и исполнитель — уже новость. А пауза и продолжение
+    /// без смены трека обязаны сказать об этом прямо, а не молча повторить
+    /// того же исполнителя, будто ничего не произошло.
+    public nonisolated static func activityEvent(for state: NowPlaying,
+                                                  reason: MediaActivityReason = .trackChanged)
+        -> ActivityEvent? {
         // Обе строки берутся из `displayLines`: пустая первая строка читается как
         // поломка, а исполнитель, стоящий одновременно заголовком и
         // подзаголовком, — как ошибка отрисовки.
         guard let lines = state.displayLines else { return nil }
-        return ActivityEvent(kind: .track, title: lines.headline, subtitle: lines.subheadline)
+        let subtitle: String?
+        switch reason {
+        case .trackChanged:
+            subtitle = lines.subheadline
+        case .playbackToggled:
+            subtitle = state.isPlaying ? Config.Activity.resumedLabel : Config.Activity.pausedLabel
+        }
+        return ActivityEvent(kind: .track, title: lines.headline, subtitle: subtitle)
     }
+}
+
+/// Что вызвало карточку плеера — нужно, чтобы решить, показывать ли вторую
+/// строкой исполнителя или явное действие.
+public enum MediaActivityReason: Equatable, Sendable {
+    case trackChanged
+    case playbackToggled
 }

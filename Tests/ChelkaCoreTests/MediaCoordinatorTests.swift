@@ -193,3 +193,46 @@ private func stateWithArtwork(_ data: Data, elapsed: TimeInterval) -> NowPlaying
     #expect(e.subtitle == "И")
     #expect(e.kind == .track)
 }
+
+// MARK: - Карточка сообщает, что случилось, а не просто дублирует трек
+
+/// Владелец пожаловался: карточка на смену трека и на паузу выглядит
+/// одинаково — заголовок и исполнитель, и по ней нельзя понять, что вообще
+/// произошло. Смена трека остаётся информативной сама по себе (новое имя и
+/// исполнитель — уже новость), а вот пауза и продолжение обязаны сказать
+/// об этом прямо, а не повторить того же исполнителя.
+@Test func pauseReplacesArtistWithAnExplicitAction() {
+    let e = try! #require(MediaCoordinator.activityEvent(
+        for: state(title: "Т", artist: "И", playing: false), reason: .playbackToggled))
+    #expect(e.title == "Т")
+    #expect(e.subtitle == "Пауза")
+}
+
+@Test func resumeReplacesArtistWithAnExplicitAction() {
+    let e = try! #require(MediaCoordinator.activityEvent(
+        for: state(title: "Т", artist: "И", playing: true), reason: .playbackToggled))
+    #expect(e.title == "Т")
+    #expect(e.subtitle == "Продолжено")
+}
+
+@Test func trackChangeStillShowsTheArtistNotAnAction() {
+    // Смена трека это единственная причина, у которой второй строкой всё
+    // равно остаётся исполнитель: сам факт нового имени уже новость.
+    let e = try! #require(MediaCoordinator.activityEvent(
+        for: state(title: "Т", artist: "И", playing: true), reason: .trackChanged))
+    #expect(e.subtitle == "И")
+}
+
+@Test @MainActor func ingestPicksTheRightReasonForEachKindOfChange() {
+    // Живой путь через `ingest`, а не прямой вызов `activityEvent`: карточка
+    // на смену трека при играющей музыке была и раньше — новый её сценарий —
+    // именно пауза и продолжение БЕЗ смены трека.
+    let (coordinator, source, events) = make()
+    coordinator.start()
+    source.emit(state(title: "Т", artist: "И", playing: true))
+    source.emit(state(title: "Т", artist: "И", playing: false))
+    let fired = events()
+    #expect(fired.count == 2)
+    #expect(fired[0].subtitle == "И")
+    #expect(fired[1].subtitle == "Пауза")
+}

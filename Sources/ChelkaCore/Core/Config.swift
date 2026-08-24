@@ -197,6 +197,11 @@ public enum Config {
 
     public enum Activity {
         public static let duration: TimeInterval = 3
+        /// Подписи для карточки плеера, когда карточку вызвала не смена
+        /// трека, а пауза или продолжение — иначе вторая строка молча
+        /// повторяла бы того же исполнителя, будто ничего не произошло.
+        public static let pausedLabel = "Пауза"
+        public static let resumedLabel = "Продолжено"
         /// Как часто тикает таймер, гасящий карточку по истечении `duration`.
         public static let tickInterval: TimeInterval = 0.25
         /// Насколько карточка шире самой челки — под текст и миниатюру.
