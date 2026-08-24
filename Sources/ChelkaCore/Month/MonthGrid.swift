@@ -47,6 +47,10 @@ public struct MonthGrid: Equatable {
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.calendar = calendar
+        // Таймзона форматтера НЕ берётся из календаря: без явного присвоения
+        // остаётся таймзона машины, и полночь 1-го числа по календарю уезжает
+        // в прошлый месяц — на машине в UTC август подписывается «JULY».
+        formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "LLLL"
 
         return MonthGrid(year: year, month: month,
