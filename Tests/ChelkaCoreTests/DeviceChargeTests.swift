@@ -70,6 +70,81 @@ private func fixture(_ name: String, _ ext: String) throws -> Data {
     #expect(MacBatteryParser.parse("Now drawing from 'AC Power'") == nil)
 }
 
+/// Строка снята с целевой машины в момент, когда воткнули зарядку: вместо
+/// времени в поле остатка приходит `(no estimate)` — скобки и слова, а не
+/// `H:MM remaining`. Разбор не имеет права об это спотыкаться.
+@Test func macBatteryParsesRealChargingLineWithoutTimeEstimate() throws {
+    let text = String(data: try fixture("pmset-charging", "txt"), encoding: .utf8)!
+    let mac = try #require(MacBatteryParser.parse(text))
+    #expect(mac.percent == 86)
+    #expect(mac.isCharging)
+}
+
+/// Та же машина на батарее.
+@Test func macBatteryParsesRealDischargingLine() throws {
+    let text = String(data: try fixture("pmset-discharging", "txt"), encoding: .utf8)!
+    let mac = try #require(MacBatteryParser.parse(text))
+    #expect(mac.percent == 88)
+    #expect(!mac.isCharging)
+}
+
+/// Оптимизированная зарядка держит батарею на 80% и печатает `not charging`.
+/// Это НЕ зарядка: система сама остановила ток, отключать нечего. Строка
+/// содержит слово `charging` и не содержит `discharging` — на подстроке по
+/// всей строке разбор врал ровно тут.
+@Test func macBatteryOptimizedChargingIsNotCharging() throws {
+    let text = """
+    Now drawing from 'AC Power'
+     -InternalBattery-0 (id=10000001)\t80%; not charging present: true
+    """
+    let mac = try #require(MacBatteryParser.parse(text))
+    #expect(mac.percent == 80)
+    #expect(!mac.isCharging)
+}
+
+/// То же самое, но с полем `AC attached` перед состоянием: кабель есть,
+/// а ток не идёт.
+@Test func macBatteryAcAttachedWithoutChargingIsNotCharging() throws {
+    let text = """
+    Now drawing from 'AC Power'
+     -InternalBattery-0 (id=10000001)\t80%; AC attached; not charging present: true
+    """
+    let mac = try #require(MacBatteryParser.parse(text))
+    #expect(mac.percent == 80)
+    #expect(!mac.isCharging)
+}
+
+/// Последние проценты система доливает медленно и называет это отдельно.
+@Test func macBatteryFinishingChargeIsCharging() throws {
+    let text = """
+    Now drawing from 'AC Power'
+     -InternalBattery-0 (id=10000001)\t99%; finishing charge; 0:05 remaining present: true
+    """
+    #expect(try #require(MacBatteryParser.parse(text)).isCharging)
+}
+
+/// Один `AC attached` без состояния зарядки — обещать «можно отключать» нельзя.
+@Test func macBatteryAcAttachedAloneIsNotCharging() throws {
+    let text = """
+    Now drawing from 'AC Power'
+     -InternalBattery-0 (id=10000001)\t50%; AC attached; present: true
+    """
+    #expect(try !#require(MacBatteryParser.parse(text)).isCharging)
+}
+
+/// Все формулировки состояния, какие печатает pmset, перечислены явно.
+/// Незнакомое слово — не зарядка: врать в сторону «можно отключать» дороже,
+/// чем промолчать.
+@Test func macBatteryReadsUnknownStateAsNotCharging() throws {
+    let text = """
+    Now drawing from 'AC Power'
+     -InternalBattery-0 (id=10000001)\t50%; неизвестно что; present: true
+    """
+    let mac = try #require(MacBatteryParser.parse(text))
+    #expect(mac.percent == 50)
+    #expect(!mac.isCharging)
+}
+
 private struct StubRunner: CommandRunning {
     let outputs: [String: String?]
     func run(_ path: String, _ args: [String]) -> String? { outputs[args.last ?? ""] ?? nil }
