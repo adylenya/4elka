@@ -17,10 +17,24 @@ public extension Settings {
         next.blockedBundleIDs = Self.cleanedBundleIDs(blockedBundleIDs)
         next.activityDuration = Config.Limits.activityDuration.clamping(activityDuration)
 
-        let thresholds = Self.orderedThresholds(low: batteryLow, high: batteryHigh)
+        // Гистерезис жмётся первым: пороги человек задаёт осознанно («скажи на
+        // 20 и на 25»), гистерезис — величина техническая. Подвинутый порог
+        // означал бы уведомление на проценте, которого человек не выбирал.
+        // Пороги двигаются только тогда, когда зазора между ними не хватает
+        // даже для минимально разрешённого гистерезиса.
+        let hysteresisFloor = Config.Limits.hysteresis.lowerBound
+        let thresholds = Self.orderedThresholds(low: batteryLow, high: batteryHigh,
+                                                hysteresisFloor: hysteresisFloor)
         next.batteryLow = thresholds.low
         next.batteryHigh = thresholds.high
-        next.batteryHysteresis = Config.Limits.hysteresis.clamping(batteryHysteresis)
+        let gap = thresholds.high - thresholds.low
+        let hysteresisClamped = Config.Limits.hysteresis.clamping(batteryHysteresis)
+        // Набор `low = 99, high = 100, hysteresis = 1` проходил бы отдельную
+        // проверку целиком, а батарея, гуляющая между 98 и 100, выдавала бы
+        // «заряд на исходе» на каждом проходе через 98: правило успевало
+        // взвестись обратно, толком не отойдя от порога. Гистерезис обязан
+        // быть строго меньше зазора.
+        next.batteryHysteresis = Config.Limits.hysteresis.clamping(min(hysteresisClamped, gap - 1))
 
         next.weatherLatitude = Config.Limits.latitude.clamping(weatherLatitude)
         next.weatherLongitude = Config.Limits.longitude.clamping(weatherLongitude)
@@ -41,8 +55,12 @@ public extension Settings {
     }
 
     /// Пороги обязаны идти по возрастанию и не совпадать: на равных «мало» и
-    /// «хватит» срабатывали бы на одном и том же проценте.
-    private static func orderedThresholds(low: Int, high: Int) -> (low: Int, high: Int) {
+    /// «хватит» срабатывали бы на одном и том же проценте. Дополнительно
+    /// зазор обязан вмещать хотя бы минимально разрешённый гистерезис —
+    /// иначе сжатие гистерезиса в `sanitized()` упёрлось бы в его нижний
+    /// предел и не смогло бы поместиться никогда.
+    private static func orderedThresholds(low: Int, high: Int,
+                                          hysteresisFloor: Int) -> (low: Int, high: Int) {
         var lowFixed = Config.Limits.batteryLow.clamping(low)
         var highFixed = Config.Limits.batteryHigh.clamping(high)
         if lowFixed > highFixed { swap(&lowFixed, &highFixed) }
@@ -53,8 +71,22 @@ public extension Settings {
                 lowFixed -= 1
             }
         }
-        return (Config.Limits.batteryLow.clamping(lowFixed),
-                Config.Limits.batteryHigh.clamping(highFixed))
+        lowFixed = Config.Limits.batteryLow.clamping(lowFixed)
+        highFixed = Config.Limits.batteryHigh.clamping(highFixed)
+
+        let minimumGap = hysteresisFloor + 1
+        while highFixed - lowFixed < minimumGap {
+            if highFixed < Config.Limits.batteryHigh.upperBound {
+                highFixed += 1
+            } else if lowFixed > Config.Limits.batteryLow.lowerBound {
+                lowFixed -= 1
+            } else {
+                // Оба предела упёрлись одновременно — при нынешних диапазонах
+                // `Config.Limits` этого не бывает, но защита не даёт зависнуть.
+                break
+            }
+        }
+        return (lowFixed, highFixed)
     }
 
     /// Пробелы вокруг идентификатора — след копирования из статьи, пустые
