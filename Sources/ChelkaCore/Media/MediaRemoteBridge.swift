@@ -41,6 +41,7 @@ public final class MediaRemoteBridge: @unchecked Sendable {
     private var startedAt: Date?
     private var state = NowPlaying.empty
     private var buffer = LineBuffer()
+    private var errorTail = ErrorTail()
     private var policy = RestartPolicy.initial
     private var stopped = false
 
@@ -104,6 +105,17 @@ public final class MediaRemoteBridge: @unchecked Sendable {
         // состояние. Панель после этого уверенно показывает прошлый трек и
         // прошлую обложку — на паузе сколько угодно долго.
         buffer = LineBuffer()
+        // Хвост ошибок сбрасывается вместе с буфером: жалобы умершего процесса,
+        // приписанные следующему, показали бы уже несуществующую причину.
+        errorTail = ErrorTail()
+    }
+
+    /// Вызывается только на очереди супервизора.
+    private func collectErrorLocked(_ chunk: Data, from id: AdapterProcessID) {
+        // Чужой процесс игнорируется по той же причине, что и в завершении:
+        // очередь даёт порядок, но не тождество процесса.
+        guard id == currentID else { return }
+        errorTail.appending(chunk)
     }
 
     /// Вызывается только на очереди супервизора.
@@ -131,7 +143,10 @@ public final class MediaRemoteBridge: @unchecked Sendable {
                 guard let self else { return }
                 supervision.async { self.consumeLocked(chunk, from: id) }
             },
-            errorOutput: { _ in },
+            errorOutput: { [weak self] chunk in
+                guard let self else { return }
+                supervision.async { self.collectErrorLocked(chunk, from: id) }
+            },
             exit: { [weak self] finished in
                 guard let self else { return }
                 supervision.async { self.handleExitLocked(finished) }
@@ -152,6 +167,13 @@ public final class MediaRemoteBridge: @unchecked Sendable {
             return
         }
         let lifetime = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+        // Жалобы самого адаптера — единственная причина, по которой можно
+        // отличить «фреймворк не собран» от «фреймворк не грузится» и от
+        // «сменился формат потока». Пишем их при завершении: раньше момента
+        // причина ещё не сказана, позже — процесса уже нет.
+        if let complaints = errorTail.text {
+            log("адаптер плеера перед завершением сказал: \(complaints)")
+        }
         teardownLocked()
         // Проверка стоит ЗДЕСЬ, а не только перед постановкой задержки: раньше
         // отложенный перезапуск успевал сработать уже после остановки и поднимал

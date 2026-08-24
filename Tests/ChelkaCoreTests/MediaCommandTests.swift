@@ -73,6 +73,27 @@ import Foundation
     #expect(log.messages.count == 1)
 }
 
+// MARK: - Хвост потока ошибок
+
+@Test func errorTailKeepsOnlyTheLastLines() {
+    var tail = ErrorTail()
+    for i in 1...(Config.Media.errorTailLines + 3) {
+        tail.appending(Data("строка \(i)\n".utf8))
+    }
+    let text = try! #require(tail.text)
+    #expect(!text.contains("строка 1\n"))
+    #expect(text.contains("строка \(Config.Media.errorTailLines + 3)"))
+    #expect(text.components(separatedBy: "строка").count - 1 == Config.Media.errorTailLines)
+}
+
+@Test func errorTailIsNothingWhenAdapterSaidNothing() {
+    var tail = ErrorTail()
+    #expect(tail.text == nil)
+    tail.appending(Data("недописанная строка".utf8))
+    // Недособранная строка — ещё не строка: ждём перевода строки.
+    #expect(tail.text == nil)
+}
+
 @Test func restartPolicyGrowsDelayAndCapsIt() {
     var policy = RestartPolicy.initial
     #expect(policy.delay == Config.Media.restartDelayInitial)

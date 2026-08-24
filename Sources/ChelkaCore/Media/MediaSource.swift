@@ -90,3 +90,37 @@ public struct RestartPolicy: Equatable, Sendable {
         immediateFailures >= Config.Media.maxImmediateFailures
     }
 }
+
+/// Хвост потока ошибок адаптера.
+///
+/// Поток ошибок уходил в `/dev/null`, и самый вероятный сбой плеера — perl не
+/// смог загрузить фреймворк — выходил наружу одной строкой «падает сразу,
+/// прекращаю попытки»: без пути и без причины. Держим последние строки, чтобы
+/// в лог попало то, что сказал сам адаптер перед смертью.
+///
+/// Накопитель байтов, как и `LineBuffer` рядом: правило иммутабельности
+/// относится к типам состояния, а не к буферам, собирающим поток по кускам.
+struct ErrorTail {
+    private var pending = Data()
+    private var lines: [String] = []
+
+    /// Недособранная строка — ещё не строка: ждём перевода строки. Иначе
+    /// огрызок, приехавший последним куском, попал бы в лог как полноценная
+    /// жалоба адаптера.
+    mutating func appending(_ chunk: Data) {
+        pending.append(chunk)
+        while let index = pending.firstIndex(of: UInt8(ascii: "\n")) {
+            let raw = pending[pending.startIndex..<index]
+            pending = pending[pending.index(after: index)...]
+            guard let text = String(data: raw, encoding: .utf8), !text.isEmpty else { continue }
+            lines.append(text)
+            if lines.count > Config.Media.errorTailLines {
+                lines.removeFirst(lines.count - Config.Media.errorTailLines)
+            }
+        }
+    }
+
+    /// `nil`, если адаптер не сказал ничего: пустая строка в логе хуже её
+    /// отсутствия — она выглядит как «причина есть, но не показана».
+    var text: String? { lines.isEmpty ? nil : lines.joined(separator: "\n") }
+}

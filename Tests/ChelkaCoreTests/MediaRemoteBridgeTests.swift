@@ -130,6 +130,38 @@ private func bridge(_ launcher: FakeLauncher,
     #expect(titles.isEmpty)
 }
 
+// MARK: - Поток ошибок адаптера
+
+/// Поток ошибок уходил в /dev/null, и самый вероятный сбой — фреймворк не
+/// грузится — наружу выходил как одна строка «падает сразу, прекращаю попытки»:
+/// без пути и без причины.
+@Test @MainActor func complaintsFromErrorStreamEndUpInTheLog() {
+    let launcher = FakeLauncher()
+    let log = Recorder()
+    let b = MediaRemoteBridge(launcher: launcher, scheduler: .immediate, log: { log.add($0) })
+    b.start(onState: { _ in }, onUnavailable: {})
+    #expect(launcher.waitForAttempt())
+    let first = try! #require(launcher.last)
+
+    first.handlers.errorOutput(Data("Failed to load framework\n".utf8))
+    first.handlers.exit(first.id)
+    b.waitForPendingWork()
+
+    #expect(log.sawMessage(containing: "Failed to load framework"))
+}
+
+/// Отказ запуска обязан назвать причину, а не только факт.
+@Test @MainActor func launchRefusalNamesItsReason() {
+    let launcher = FakeLauncher(failFirstLaunches: 1)
+    let log = Recorder()
+    let b = MediaRemoteBridge(launcher: launcher, scheduler: .immediate, log: { log.add($0) })
+    b.start(onState: { _ in }, onUnavailable: {})
+    #expect(launcher.waitForAttempt())
+    b.waitForPendingWork()
+
+    #expect(log.sawMessage(containing: "refused"))
+}
+
 // MARK: - Перезапуск начинает разбор с чистого листа
 
 /// Процесс умер посреди строки, в буфере остался огрызок. Первая строка нового
